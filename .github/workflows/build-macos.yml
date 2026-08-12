@@ -76,14 +76,25 @@ jobs:
           pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # FIX: Force Clang to strip out the hostile Intel SSE float-point unit calculations during wheel generation
-          export CFLAGS="-arch arm64 -arch x86_64 -Wno-error=unused-command-line-argument -D__SSE__=1 -D__SSE2__=1"
-          export CXXFLAGS="-arch arm64 -arch x86_64 -Wno-error=unused-command-line-argument -D__SSE__=1 -D__SSE2__=1"
-          pip install rencode --no-binary rencode
-
-          # Clear out the temporary local compilation flag variables to avoid interfering with Deluge setup
-          unset CFLAGS
-          unset CXXFLAGS
+          # FIX: Download rencode source, strip legacy x86 hardware flags, and build a clean universal2 wheel
+          pip download --no-binary :all: --no-deps rencode
+          tar -xf rencode-*.tar.gz
+          cd rencode-*/
+          
+          # Force the build script to drop x86 specific vector architecture optimizations
+          sed -i '' 's/-msse//g' build.py
+          sed -i '' 's/-msse2//g' build.py
+          sed -i '' 's/-mfma//g' build.py
+          sed -i '' 's/-mfpmath=sse//g' build.py
+          sed -i '' 's/-march=native//g' build.py
+          
+          # Force clean cross-compilation parameters for the wheel container
+          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+          export CXXFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+          
+          pip install .
+          cd ..
 
           ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
