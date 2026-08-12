@@ -35,8 +35,8 @@ jobs:
           export CXXFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
           export LDFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
           
-          # Force Homebrew to compile universal packages targeting macOS 11.0+
-          brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar
+          # ADDED: rencode is included here to force a clean, pre-built universal system package
+          brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar rencode
 
       - name: Import Apple Developer Certificate
         env:
@@ -77,8 +77,8 @@ jobs:
           pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # FIX: Clear global target overrides temporarily so pip can download/compile rencode cleanly 
-          CFLAGS="" CXXFLAGS="" LDFLAGS="" pip install rencode
+          # LINK SYSTEM MODULES: Make Homebrew's compiled version of rencode available to the environment
+          export PYTHONPATH="/opt/homebrew/lib/python3.11/site-packages:$PYTHONPATH"
 
           ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
