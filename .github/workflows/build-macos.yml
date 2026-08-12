@@ -98,10 +98,10 @@ jobs:
           
           # Force clean cross-compilation parameters for the wheel container
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
-          export CXXFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
-          pip install .
+          # ADDED: --no-build-isolation ensures pip uses our globally installed Cython
+          pip install . --no-build-isolation
           cd ..
 
           ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
