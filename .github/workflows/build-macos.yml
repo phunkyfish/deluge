@@ -21,6 +21,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install System Dependencies
+        env:
+          # Bypass Homebrew tap trust blocking warnings on the runner environment
+          HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
         run: |
           # Configure cross-compilation environment variables globally
           export MACOSX_DEPLOYMENT_TARGET=11.0
