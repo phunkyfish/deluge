@@ -72,11 +72,17 @@ jobs:
         run: |
           export MACOSX_DEPLOYMENT_TARGET=11.0
           
+          # Force clean cross-compilation parameters globally for python pip wheel compilation
+          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
+          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+          
           pip install --upgrade pip setuptools wheel
-          pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # FIX: Download rencode source, strip legacy x86 hardware flags, and build a clean universal2 wheel
+          # FIX: Force key dependency libraries to build completely from source with universal2 parameters
+          pip install --no-binary :all: --force-reinstall pygobject pycairo cffi cryptography twisted
+
+          # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
           tar -xf rencode-*.tar.gz
           cd rencode-*/
@@ -95,16 +101,11 @@ jobs:
           )
           EOF
           
-          # Force clean cross-compilation parameters for the wheel container
-          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
-          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
-          
-          # FIX: Bypass pip build hooks completely and install using native python environment setup execution
           python setup.py build_ext --inplace
           python setup.py install
           cd ..
 
-          ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
+          # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
           # Install Deluge with the forced static version patch
