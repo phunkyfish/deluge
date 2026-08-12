@@ -81,12 +81,20 @@ jobs:
           tar -xf rencode-*.tar.gz
           cd rencode-*/
           
-          # Force the build script to drop x86 specific vector architecture optimizations
-          sed -i '' 's/-msse//g' build.py
-          sed -i '' 's/-msse2//g' build.py
-          sed -i '' 's/-mfma//g' build.py
-          sed -i '' 's/-mfpmath=sse//g' build.py
-          sed -i '' 's/-march=native//g' build.py
+          # Delete their custom script and pyproject configurations completely
+          rm -f build.py pyproject.toml poetry.lock
+          
+          # Generate a clean, bulletproof standard setup script
+          cat <<EOF > setup.py
+          from setuptools import setup, Extension
+          from Cython.Build import cythonize
+          setup(
+              name="rencode",
+              version="1.0.8",
+              ext_modules=cythonize([Extension("rencode._rencode", ["rencode/_rencode.pyx"])]),
+              packages=["rencode"]
+          )
+          EOF
           
           # Force clean cross-compilation parameters for the wheel container
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
