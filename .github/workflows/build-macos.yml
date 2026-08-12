@@ -29,14 +29,13 @@ jobs:
           # Bypass Homebrew tap trust blocking warnings on the runner environment
           HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
         run: |
-          # Configure cross-compilation environment variables globally
           export MACOSX_DEPLOYMENT_TARGET=11.0
           export CFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
           export CXXFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
           export LDFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
           
-          # ADDED: rencode is included here to force a clean, pre-built universal system package
-          brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar rencode
+          # Clean fallback list without forcing untracked third-party taps
+          brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar
 
       - name: Import Apple Developer Certificate
         env:
@@ -77,8 +76,14 @@ jobs:
           pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # LINK SYSTEM MODULES: Make Homebrew's compiled version of rencode available to the environment
-          export PYTHONPATH="/opt/homebrew/lib/python3.11/site-packages:$PYTHONPATH"
+          # FIX: Force Clang to strip out the hostile Intel SSE float-point unit calculations during wheel generation
+          export CFLAGS="-arch arm64 -arch x86_64 -Wno-error=unused-command-line-argument -D__SSE__=1 -D__SSE2__=1"
+          export CXXFLAGS="-arch arm64 -arch x86_64 -Wno-error=unused-command-line-argument -D__SSE__=1 -D__SSE2__=1"
+          pip install rencode --no-binary rencode
+
+          # Clear out the temporary local compilation flag variables to avoid interfering with Deluge setup
+          unset CFLAGS
+          unset CXXFLAGS
 
           ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
