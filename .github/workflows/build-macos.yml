@@ -15,6 +15,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch Git Tags Explicitly
+        run: |
+          git fetch --tags --force
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
