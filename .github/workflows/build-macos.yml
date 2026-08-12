@@ -77,8 +77,8 @@ jobs:
           pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # HARD PATCH: Force version.py to bypass Git lookup logic entirely
-          sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" deluge/version.py
+          ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
+          find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
           # Install Deluge with the forced static version patch
           pip install .
