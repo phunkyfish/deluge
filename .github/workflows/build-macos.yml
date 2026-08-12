@@ -110,11 +110,11 @@ jobs:
           # Install Deluge with the forced static version patch
           pip install .
 
-          # Package universal binaries via PyInstaller
+          # Package universal binaries via PyInstaller pointing to the global executable path
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --add-data "deluge/ui/data:deluge/ui/data" \
-            venv/bin/deluge-gtk
+            /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/deluge-gtk -d dist/Deluge.app/Contents/libs/
