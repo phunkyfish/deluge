@@ -84,14 +84,13 @@ jobs:
           # Delete their custom script and pyproject configurations completely
           rm -f build.py pyproject.toml poetry.lock
           
-          # Generate a clean, bulletproof standard setup script
+          # Generate a setup script that compiles the pre-baked _rencode.c file directly
           cat <<EOF > setup.py
           from setuptools import setup, Extension
-          from Cython.Build import cythonize
           setup(
               name="rencode",
               version="1.0.8",
-              ext_modules=cythonize([Extension("rencode._rencode", ["rencode/_rencode.pyx"])]),
+              ext_modules=[Extension("rencode._rencode", ["rencode/_rencode.c"])],
               packages=["rencode"]
           )
           EOF
