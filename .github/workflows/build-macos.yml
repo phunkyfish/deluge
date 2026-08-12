@@ -77,9 +77,8 @@ jobs:
           pip install --no-binary :all: pygobject pycairo
           pip install pyinstaller
 
-          # FIX: Prevent 'rencode' from passing hostile x86 vector assembly optimizations to ARM64 compilers
-          pip install rencode --no-binary rencode --config-settings="--global-option=-O2" --config-settings="--global-option=-g" || \
-          pip install rencode
+          # FIX: Clear global target overrides temporarily so pip can download/compile rencode cleanly 
+          CFLAGS="" CXXFLAGS="" LDFLAGS="" pip install rencode
 
           ## DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
