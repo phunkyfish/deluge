@@ -79,16 +79,19 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # STEP 1: Download explicit universal2 wheels for heavy trailing dependencies first
+          # FIX: Downloader Isolation Window
           mkdir -p universal_wheels
+          
+          # 1. Download pre-compiled fat wheels for everything except cffi using strict universal filters
           pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels \
             cryptography twisted zope.interface setproctitle pyopenssl service-identity
           
-          # Install the collected third-party fat wheels directly to the runner environment
-          pip install --force-reinstall universal_wheels/*.whl
-
-          # STEP 2: Compile cffi directly from source LAST so that trailing installer hooks cannot overwrite it
-          pip install --no-binary cffi --force-reinstall cffi
+          # 2. Extract cffi's source distribution wheel manually into the same staging directory
+          pip download --no-binary :all: --no-deps -d universal_wheels cffi
+          
+          # 3. UNIFIED TRANSACTION: Force reinstall everything from the isolated wheels directory.
+          # This forces cffi to compile universally, while preventing pip from fetching thin online fallbacks.
+          pip install --force-reinstall --no-index --find-links=universal_wheels universal_wheels/*.whl universal_wheels/*.tar.gz
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
