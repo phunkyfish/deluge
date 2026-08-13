@@ -72,17 +72,16 @@ jobs:
         run: |
           export MACOSX_DEPLOYMENT_TARGET=11.0
           
-          # Force clean cross-compilation parameters globally for python pip wheel compilation
+          # Force clean cross-compilation parameters globally for wheel compilation
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Build cffi from source to lock down its universal2 layer,
-          # but fetch pre-built universal binary wheels for cryptography and twisted to bypass Rust clang expansion blocks
-          pip install --no-binary cffi --force-reinstall cffi
-          pip install cryptography twisted
+          # FIX: Force pip to download the true multi-architecture universal2 wheels from PyPI 
+          # instead of fallback single-arch native binaries
+          pip install --upgrade --platform macosx_11_0_universal2 --only-binary=:all: cffi cryptography twisted
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
