@@ -79,18 +79,16 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Downloader Isolation Window
+          # STEP 1: Download ONLY packages that natively publish fat universal2 wheels on PyPI
           mkdir -p universal_wheels
-          
-          # 1. Force download ONLY explicit pre-compiled binary fat wheels to prevent source fallback errors
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted zope.interface setproctitle pyopenssl service-identity
+            cryptography twisted setproctitle pyopenssl service-identity
           
-          # 2. Safely install the pre-compiled fat wheels straight into your system execution tree
+          # Install the collected third-party fat wheels straight into your system execution tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
 
-          # 3. Compile and link cffi from source natively in its own isolated transaction
-          pip install --no-binary cffi --force-reinstall cffi
+          # STEP 2: Compile cffi and zope.interface from source to build their true universal2 binary layers locally
+          pip install --no-binary cffi,zope.interface --force-reinstall cffi zope.interface
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
