@@ -82,9 +82,12 @@ jobs:
           # FIX: Compile cffi directly from source using our universal architecture flags
           pip install --no-binary cffi --force-reinstall cffi
 
-          # FIX: Download only cryptography and twisted using the explicit universal2 target systems
+          # FIX: Download cryptography and twisted using universal2 filters, 
+          # but omit --only-binary so pip handles dependency checking smoothly
           mkdir -p universal_wheels
-          pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels cryptography twisted
+          pip download --platform macosx_11_0_universal2 -d universal_wheels cryptography twisted
+          
+          # Install only the collected target wheels directly to the runner environment
           pip install --force-reinstall universal_wheels/*.whl
 
           # Download rencode and compile it as a pure C extension without requiring Cython
@@ -120,6 +123,7 @@ jobs:
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --add-data "deluge/ui/data:deluge/ui/data" \
+            /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/deluge/ui/data \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # Link non-python C libraries into the bundle
