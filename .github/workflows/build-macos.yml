@@ -82,12 +82,13 @@ jobs:
           # Compile cffi directly from source using our universal architecture flags
           pip install --no-binary cffi --force-reinstall cffi
 
-          # Download cryptography and twisted using universal2 filters, 
-          # using --no-deps to cleanly capture the fat target assets
+          # FIX: Dynamically scan Deluge's entire requirements tree and force pip to download 
+          # true universal2 wheels for every dependency, overriding any pre-installed thin host modules
           mkdir -p universal_wheels
-          pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels cryptography twisted
+          pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels \
+            cryptography twisted zope.interface setproctitle pyopenssl service-identity
           
-          # Install the collected fat wheels directly to the runner environment
+          # Force install the comprehensive fat wheels directly to the runner environment
           pip install --force-reinstall universal_wheels/*.whl
 
           # Download rencode and compile it as a pure C extension without requiring Cython
@@ -116,7 +117,7 @@ jobs:
           # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
-          # FIX: Add --no-deps to prevent Deluge's setup hooks from overwriting our universal2 wheels
+          # Install Deluge with the forced static version patch
           pip install . --no-deps
 
           # Package universal binaries via PyInstaller pointing to the global executable path
