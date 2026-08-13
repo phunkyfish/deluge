@@ -79,15 +79,15 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Compile cffi directly from source using our universal architecture flags
+          # Compile cffi directly from source using our universal architecture flags
           pip install --no-binary cffi --force-reinstall cffi
 
-          # FIX: Download cryptography and twisted using universal2 filters, 
-          # but omit --only-binary so pip handles dependency checking smoothly
+          # FIX: Add --no-deps to cleanly download the universal2 binaries for crypto and networking 
+          # without triggering pip's strict environmental cross-compilation safety errors
           mkdir -p universal_wheels
-          pip download --platform macosx_11_0_universal2 -d universal_wheels cryptography twisted
+          pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels cryptography twisted
           
-          # Install only the collected target wheels directly to the runner environment
+          # Install the collected fat wheels directly to the runner environment
           pip install --force-reinstall universal_wheels/*.whl
 
           # Download rencode and compile it as a pure C extension without requiring Cython
