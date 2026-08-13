@@ -79,16 +79,12 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Explicitly target the individual universal2 wheel strings for each separate package
+          # FIX: Compile cffi directly from source using our universal architecture flags
+          pip install --no-binary cffi --force-reinstall cffi
+
+          # FIX: Download only cryptography and twisted using the explicit universal2 target systems
           mkdir -p universal_wheels
-          
-          # cffi uses the legacy 10_9 tag system
-          pip download --platform macosx_10_9_universal2 --only-binary=:all: -d universal_wheels cffi
-          
-          # cryptography and twisted use the modern 11_0 tag layout
           pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels cryptography twisted
-          
-          # Install the collected fat wheels directly to the runner environment
           pip install --force-reinstall universal_wheels/*.whl
 
           # Download rencode and compile it as a pure C extension without requiring Cython
