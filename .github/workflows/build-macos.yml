@@ -72,16 +72,17 @@ jobs:
         run: |
           export MACOSX_DEPLOYMENT_TARGET=11.0
           
-          # Force clean cross-compilation parameters globally for wheel compilation
+          # Force clean cross-compilation parameters globally for python pip wheel compilation
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Target only the specific modules causing PyInstaller architecture errors, 
-          # allowing build system dependencies (like maturin) to use clean pre-compiled wheels.
-          pip install --no-binary cffi,cryptography,twisted --force-reinstall cffi cryptography twisted
+          # FIX: Build cffi from source to lock down its universal2 layer,
+          # but fetch pre-built universal binary wheels for cryptography and twisted to bypass Rust clang expansion blocks
+          pip install --no-binary cffi --force-reinstall cffi
+          pip install cryptography twisted
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
@@ -123,7 +124,6 @@ jobs:
 
           # Deep sign the completed .app bundle using the corrected internal binary layout
           codesign --force --options runtime --deep --sign "Developer ID Application" --entitlements entitlements.plist dist/Deluge.app
-
 
       - name: Build Outer DMG Installer
         run: |
