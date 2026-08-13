@@ -79,17 +79,16 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # Compile cffi directly from source using our universal architecture flags
-          pip install --no-binary cffi --force-reinstall cffi
-
-          # FIX: Dynamically scan Deluge's entire requirements tree and force pip to download 
-          # true universal2 wheels for every dependency, overriding any pre-installed thin host modules
+          # STEP 1: Download explicit universal2 wheels for heavy trailing dependencies first
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels \
             cryptography twisted zope.interface setproctitle pyopenssl service-identity
           
-          # Force install the comprehensive fat wheels directly to the runner environment
+          # Install the collected third-party fat wheels directly to the runner environment
           pip install --force-reinstall universal_wheels/*.whl
+
+          # STEP 2: Compile cffi directly from source LAST so that trailing installer hooks cannot overwrite it
+          pip install --no-binary cffi --force-reinstall cffi
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
@@ -117,7 +116,7 @@ jobs:
           # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
-          # Install Deluge with the forced static version patch
+          # Install Deluge with the forced static version patch (preserving your environment setup)
           pip install . --no-deps
 
           # Package universal binaries via PyInstaller pointing to the global executable path
