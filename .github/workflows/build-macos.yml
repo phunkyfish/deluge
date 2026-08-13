@@ -82,8 +82,8 @@ jobs:
           # Compile cffi directly from source using our universal architecture flags
           pip install --no-binary cffi --force-reinstall cffi
 
-          # FIX: Add --no-deps to cleanly download the universal2 binaries for crypto and networking 
-          # without triggering pip's strict environmental cross-compilation safety errors
+          # Download cryptography and twisted using universal2 filters, 
+          # using --no-deps to cleanly capture the fat target assets
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --no-deps -d universal_wheels cryptography twisted
           
@@ -116,10 +116,10 @@ jobs:
           # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
-          # Install Deluge with the forced static version patch
-          pip install .
+          # FIX: Add --no-deps to prevent Deluge's setup hooks from overwriting our universal2 wheels
+          pip install . --no-deps
 
-          # Package universal binaries via PyInstaller targeting the clean system deluge-gtk binary path
+          # Package universal binaries via PyInstaller pointing to the global executable path
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --add-data "deluge/ui/data:deluge/ui/data" \
