@@ -72,16 +72,17 @@ jobs:
         run: |
           export MACOSX_DEPLOYMENT_TARGET=11.0
           
-          # Force clean cross-compilation parameters globally for wheel compilation
+          # Force clean cross-compilation parameters globally for python pip wheel compilation
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
           pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
-          # FIX: Force pip to download the true multi-architecture universal2 wheels from PyPI 
-          # instead of fallback single-arch native binaries
-          pip install --upgrade --platform macosx_11_0_universal2 --only-binary=:all: cffi cryptography twisted
+          # FIX: Securely download explicit universal2 wheels to a temp folder to bypass pip safety blocks
+          mkdir -p universal_wheels
+          pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels cffi cryptography twisted
+          pip install --force-reinstall universal_wheels/*.whl
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
