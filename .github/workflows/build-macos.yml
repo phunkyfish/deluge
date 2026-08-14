@@ -144,12 +144,13 @@ jobs:
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
 
-          echo "Executing exhaustive root dist-tree recursive signing pass..."
+          echo "Executing brute-force root dist-tree recursive signing pass..."
           
-          # FIX: Sweep the ENTIRE dist/ folder layout structure to capture raw folder modules and bundle variants alike
-          find dist -type f \( -name "*.so" -o -name "*.dylib" -o -name "Deluge" -o -name "deluge-gtk" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          # FIX: Force a hardened runtime and timestamp onto EVERY single loose file in the dist output path.
+          # This catches Python frameworks, hidden binary shims, .so modules, and nested C libraries uniformly.
+          find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           
-          # Final Step: Deep validation seal anchoring the top-level app bundle container explicitly
+          # Final Step: Deep validation seal anchoring the top-level app bundle container explicitly with entitlements
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
