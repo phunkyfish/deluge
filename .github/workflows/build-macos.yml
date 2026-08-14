@@ -145,8 +145,9 @@ jobs:
           echo "Executing deep nested component signing passes..."
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
-          # Deep sign all core binaries found across execution paths
-          find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          # FIX: Deep scan the absolute entire app bundle structure recursively to sign EVERY binary, .dylib, and .so module
+          echo "Executing comprehensive recursive multi-architecture signing pass..."
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -perm +111 \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
           # Final Step: Seal the main top-level outer bundle container with entitlements embedded
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
