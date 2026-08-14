@@ -141,13 +141,9 @@ jobs:
           # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # FIX: Recursively scan the entire interior bundle layout structure to capture all hidden modules
-          echo "Executing deep nested component signing passes..."
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-
-          # FIX: Use BSD-compliant find logic for macOS to sign all binaries, .dylib, and .so extensions
-          echo "Executing comprehensive recursive multi-architecture signing pass..."
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          # FIX: Drop permission bit requirements and sign EVERYTHING matching target library extensions
+          echo "Executing exhaustive recursive multi-architecture signing pass..."
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" -o -name "deluge-gtk" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
           # Final Step: Seal the main top-level outer bundle container with entitlements embedded
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
