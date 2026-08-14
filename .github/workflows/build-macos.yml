@@ -125,27 +125,23 @@ jobs:
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
+          # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # FIX: Find the precise loaded certificate name dynamically from the temporary keychain
-          CERT_NAME=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -n 1 | awk -F '"' '{print $2}')
-          echo "Using Certificate Identity: $CERT_NAME"
-          
-          # Deep sign using the specific certificate name string
-          codesign --force --options runtime --deep --sign "$CERT_NAME" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          # CLEAN FIX: Explicitly deep-sign using your exact Developer ID string pattern
+          codesign --force --options runtime --deep --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
-          CERT_NAME=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -n 1 | awk -F '"' '{print $2}')
-          
+          # CLEAN FIX: Package and sign using the streamlined production flag identity
           create-dmg \
             --volname "Deluge Universal Installer" \
-            --sign "$CERT_NAME" \
+            --sign "Developer ID Application: Ross Nicholson" \
             --keychain build.keychain \
             "Deluge-2.2.0-Universal.dmg" \
             "dist/"
 
-          codesign --force --sign "$CERT_NAME" --keychain build.keychain "Deluge-2.2.0-Universal.dmg"
+          codesign --force --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain "Deluge-2.2.0-Universal.dmg"
 
       - name: Notarize and Staple DMG
         env:
