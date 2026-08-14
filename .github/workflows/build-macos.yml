@@ -143,13 +143,13 @@ jobs:
 
           # FIX: Recursively scan the entire interior bundle layout structure to capture all hidden modules
           echo "Executing deep nested component signing passes..."
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
           # Deep sign all core binaries found across execution paths
-          find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
+          find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
           # Final Step: Seal the main top-level outer bundle container with entitlements embedded
-          codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
@@ -165,7 +165,7 @@ jobs:
             "dist/"
 
           # 2. Force-sign the generated outer DMG container via Apple's built-in codesign binary tool
-          codesign --force --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
+          codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Notarize and Staple DMG
         env:
