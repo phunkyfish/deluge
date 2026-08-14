@@ -141,11 +141,11 @@ jobs:
           # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # FIX: Securely sign all internal .dylib and .so extensions recursive layer patterns first
+          # FIX: Recursively scan the entire interior bundle layout structure to capture all hidden modules
           echo "Executing deep nested component signing passes..."
-          find dist/Deluge.app/Contents/_internal dist/Deluge.app/Contents/libs -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
 
-          # Deep sign the secondary nested binary frameworks
+          # Deep sign all core binaries found across execution paths
           find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
 
           # Final Step: Seal the main top-level outer bundle container with entitlements embedded
