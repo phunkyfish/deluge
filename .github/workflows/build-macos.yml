@@ -141,12 +141,22 @@ jobs:
           # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # FIX: Drop permission bit requirements and sign EVERYTHING matching target library extensions
-          echo "Executing exhaustive recursive multi-architecture signing pass..."
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" -o -name "deluge-gtk" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          # ====================================================================
+          # THE DEFINITIVE CODESIGN FIX: Complete absolute bundle recursive sweep
+          # ====================================================================
+          echo "Executing comprehensive recursive application signing passes..."
 
-          # Final Step: Seal the main top-level outer bundle container with entitlements embedded
-          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          # Step 1: Force sign every single .so dynamic extension found anywhere inside the entire bundle structure
+          find dist/Deluge.app -type f -name "*.so" -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+
+          # Step 2: Force sign every single .dylib shared object framework file found anywhere inside the app wrapper
+          find dist/Deluge.app -type f -name "*.dylib" -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+
+          # Step 3: Sign the internal execution binaries explicitly
+          find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+
+          # Step 4: Final deep validation seal anchoring the top-level app bundle container with your entitlements plist
+          codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
