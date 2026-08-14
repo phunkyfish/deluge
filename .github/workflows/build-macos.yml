@@ -141,8 +141,15 @@ jobs:
           # Link non-python C libraries into the bundle
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # CLEAN FIX: Explicitly deep-sign using your exact Developer ID string pattern
-          codesign --force --options runtime --deep --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          # FIX: Securely sign all internal .dylib and .so extensions recursive layer patterns first
+          echo "Executing deep nested component signing passes..."
+          find dist/Deluge.app/Contents/_internal dist/Deluge.app/Contents/libs -type f \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
+
+          # Deep sign the secondary nested binary frameworks
+          find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain {} \;
+
+          # Final Step: Seal the main top-level outer bundle container with entitlements embedded
+          codesign --force --options runtime --timestamp --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
