@@ -144,14 +144,18 @@ jobs:
 
       - name: Build Outer DMG Installer
         run: |
-          # DYNAMIC FIX 2: Use the environment variable resolved in the compilation block to name the DMG output
+          # 1. Generate the plain, raw disk image using create-dmg without internal script signing hooks
           create-dmg \
             --volname "Deluge Universal Installer" \
-            --sign "Developer ID Application: Ross Nicholson" \
-            --keychain build.keychain \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 100 \
+            --icon "Deluge.app" 200 190 \
+            --app-drop-link 600 190 \
             "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             "dist/"
 
+          # 2. Force-sign the generated outer DMG container via Apple's built-in codesign binary tool
           codesign --force --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Notarize and Staple DMG
