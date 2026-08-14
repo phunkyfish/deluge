@@ -3,7 +3,7 @@ name: Build and Notarize macOS DMG
 on:
   push:
     tags:
-      - 'v*'
+      - 'deluge-*'
   workflow_dispatch:
 
 jobs:
@@ -113,6 +113,17 @@ jobs:
           python setup.py install
           cd ..
 
+          # DYNAMIC FIX 1: Check for the exact upstream deluge- tag format and strip the prefix
+          if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
+            RAW_VERSION="${{ github.ref_name }}"
+            APP_VERSION="${RAW_VERSION#deluge-}"
+          else
+            # Smart baseline fallback for manual workflow_dispatch testing
+            APP_VERSION="2.2.0"
+          fi
+          echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+          echo "Using parsed dynamic version: $APP_VERSION"
+
           # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
 
@@ -133,15 +144,15 @@ jobs:
 
       - name: Build Outer DMG Installer
         run: |
-          # CLEAN FIX: Package and sign using the streamlined production flag identity
+          # DYNAMIC FIX 2: Use the environment variable resolved in the compilation block to name the DMG output
           create-dmg \
             --volname "Deluge Universal Installer" \
             --sign "Developer ID Application: Ross Nicholson" \
             --keychain build.keychain \
-            "Deluge-2.2.0-Universal.dmg" \
+            "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             "dist/"
 
-          codesign --force --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain "Deluge-2.2.0-Universal.dmg"
+          codesign --force --sign "Developer ID Application: Ross Nicholson" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Notarize and Staple DMG
         env:
@@ -150,14 +161,15 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           # Submit to Apple and block the workflow until processing completes
-          xcrun notarytool submit "Deluge-2.2.0-Universal.dmg" \
+          # DYNAMIC FIX 3: Pass dynamically calculated DMG filename to Apple Notary tools
+          xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait
 
           # Permanently attach the notarization ticket to the file
-          xcrun stapler staple "Deluge-2.2.0-Universal.dmg"
+          xcrun stapler staple "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Upload Finished DMG Artifact
         uses: actions/upload-artifact@v4
