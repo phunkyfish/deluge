@@ -132,7 +132,7 @@ jobs:
           # Install Deluge with the forced static version patch (preserving your environment setup)
           pip install . --no-deps
 
-          # 1. Force PyInstaller to output clean, raw decoupled directory files first
+          # Package universal binaries via PyInstaller pointing to the global executable path
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --add-data "deluge/ui/data:deluge/ui/data" \
@@ -141,17 +141,22 @@ jobs:
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
 
-          # 2. FIX: Run your comprehensive filename loop AFTER PyInstaller has completed its file writes
-          echo "Executing isolated post-build recursive signing passes..."
+          # ====================================================================
+          # KEYCHAIN STABILITY FIX: Prevent the runner from auto-locking keys
+          # ====================================================================
+          security set-keychain-settings -lut 7200 build.keychain
+
+          echo "Executing isolated, keychain-locked post-build signing passes..."
           
           # Target all nested python extension scripts directly inside the output bundle paths
+          # FIX: Added --keychain explicitly to the inner loops to prevent credential dropouts
           find dist/Deluge.app -type f -name "*.so" -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           find dist/Deluge.app -type f -name "*.dylib" -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           
           # Force sign the main core binary configuration files
           find dist/Deluge.app/Contents/MacOS -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
-          # 3. Final Step: Seal the main top-level outer bundle container with entitlements embedded using deep evaluation
+          # Final Step: Seal the main top-level outer bundle container with entitlements embedded
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
