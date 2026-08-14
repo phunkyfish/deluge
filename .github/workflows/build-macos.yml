@@ -96,6 +96,8 @@ jobs:
           cd rencode-*/
           
           # Delete their custom script and pyproject configurations completely
+          # We need to do this as the default build hardcodes to x86 and we want universal
+          # In the future if rencode is fixed all of this can be made more succint
           rm -f build.py pyproject.toml poetry.lock
           
           # Generate a setup script that compiles the pre-baked _rencode.c file directly
