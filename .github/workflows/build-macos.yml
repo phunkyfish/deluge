@@ -140,7 +140,7 @@ jobs:
           
           create-dmg \
             --volname "Deluge Universal Installer" \
-            --identity "$CERT_NAME" \
+            --sign "$CERT_NAME" \
             --keychain build.keychain \
             "Deluge-2.2.0-Universal.dmg" \
             "dist/"
