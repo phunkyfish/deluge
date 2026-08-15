@@ -80,13 +80,16 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # 1. Download and isolate pre-compiled fat universal2 wheels and required transient packages
+          # 1. Download and isolate explicit universal2 wheels for the compiled binary layers
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity incremental constantly hyperlink automat
-          pip install --force-reinstall --no-deps universal_wheels/*.whl
+            cryptography twisted setproctitle pyopenssl service-identity
           
-          # Install the collected third-party fat wheels straight into your system execution tree
+          # 2. FIX: Pull all remaining pure-Python underlying dependencies automatically 
+          # without --no-deps, allowing pip to fully satisfy structural maps (like attrs, incremental, idna, etc.)
+          pip download --only-binary=:all: -d universal_wheels cryptography twisted setproctitle pyopenssl service-identity
+          
+          # Force clean universal injection into the runner global path mapping
           pip install --force-reinstall --no-deps universal_wheels/*.whl
 
           # STEP 2: Compile cffi and zope.interface from source to build their true universal2 binary layers locally
