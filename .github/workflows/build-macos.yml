@@ -76,8 +76,7 @@ jobs:
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
-          pip install --upgrade pip wheel
-          pip install "setuptools<70.0.0"
+          pip install --upgrade pip setuptools wheel
           pip install pyinstaller
 
           # STEP 1: Download ONLY packages that natively publish fat universal2 wheels on PyPI
@@ -144,9 +143,12 @@ jobs:
           # Install Deluge with the forced static version patch (preserving your environment setup)
           pip install . --no-deps
 
-          # Package universal binaries via PyInstaller pointing to the global executable path
+          # Package application forcing path mapping to ensure universal assets are utilized
+          # FIX: We explicitly exclude pyi_rth_pkgres to prevent the NullProvider crash on modern setuptools
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --exclude-module=pyi_rth_pkgres \
+            --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
