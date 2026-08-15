@@ -92,10 +92,21 @@ jobs:
 
           # Download rencode and compile it as a pure C extension without requiring Cython
           pip download --no-binary :all: --no-deps rencode
-          tar -xf rencode-*.tar.gz
+          
+          # DYNAMIC FIX: Extract the exact archive name and parse out the version string
+          TAR_FILE=$(ls rencode-*.tar.gz | head -n 1)
+          echo "Found rencode archive: $TAR_FILE"
+          
+          # Strip 'rencode-' prefix and '.tar.gz' suffix to isolate the pure version number
+          RENCODE_VER_TMP="${TAR_FILE#rencode-}"
+          RENCODE_VERSION="${RENCODE_VER_TMP%.tar.gz}"
+          echo "Dynamically resolved rencode version: $RENCODE_VERSION"
+
+          # Extract the source code folder
+          tar -xf "$TAR_FILE"
           cd rencode-*/
           
-          # Delete their custom script and pyproject configurations completely
+          # Delete the custom script and pyproject configurations for rencode completely
           # We need to do this as the default build hardcodes to x86 and we want universal
           # In the future if rencode is fixed all of this can be made more succint
           rm -f build.py pyproject.toml poetry.lock
@@ -105,7 +116,7 @@ jobs:
           from setuptools import setup, Extension
           setup(
               name="rencode",
-              version="1.0.8",
+              version="${RENCODE_VERSION}",
               ext_modules=[Extension("rencode._rencode", ["rencode/_rencode.c"])],
               packages=["rencode"]
           )
