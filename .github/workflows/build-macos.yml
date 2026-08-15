@@ -166,7 +166,13 @@ jobs:
 
       - name: Build Outer DMG Installer
         run: |
-          # 1. Generate the plain, raw disk image using create-dmg without internal script signing hooks
+          # 1. Create a clean, isolated staging directory for the installer payload
+          mkdir -p installer_staging
+          
+          # 2. Copy ONLY the compiled .app bundle into the clean staging path
+          cp -R dist/Deluge.app installer_staging/
+          
+          # 3. Generate the disk image targeting only the clean staging folder
           create-dmg \
             --volname "Deluge Universal Installer" \
             --window-pos 200 120 \
@@ -175,9 +181,9 @@ jobs:
             --icon "Deluge.app" 200 190 \
             --app-drop-link 600 190 \
             "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
-            "dist/"
+            "installer_staging/"
 
-          # 2. Force-sign the generated outer DMG container via Apple's built-in codesign binary tool
+          # Force-sign the completed outer DMG file container smoothly via native codesign
           codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Notarize and Staple DMG
