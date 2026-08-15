@@ -76,7 +76,8 @@ jobs:
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
-          pip install --upgrade pip setuptools wheel
+          pip install --upgrade pip wheel
+          pip install "setuptools<70.0.0"
           pip install pyinstaller
 
           # STEP 1: Download ONLY packages that natively publish fat universal2 wheels on PyPI
