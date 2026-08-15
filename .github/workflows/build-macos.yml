@@ -80,10 +80,11 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # STEP 1: Download ONLY packages that natively publish fat universal2 wheels on PyPI
+          # 1. Download and isolate pre-compiled fat universal2 wheels and required transient packages
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity
+            cryptography twisted setproctitle pyopenssl service-identity incremental constantly hyperlink automat
+          pip install --force-reinstall --no-deps universal_wheels/*.whl
           
           # Install the collected third-party fat wheels straight into your system execution tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
