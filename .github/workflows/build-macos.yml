@@ -80,16 +80,27 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # 1. Download and isolate pre-compiled fat universal2 wheels for core dependencies
+          # 1. Download explicit universal2 wheels for the core compiled libraries
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
           
-          # 2. FIX: Download all sub-dependencies (attrs, incremental, idna) directly to the local folder 
-          # without --no-deps, but restrict pip from downloading duplicate binary wheels of your core packages
-          pip download --only-binary=:all: -d universal_wheels attrs incremental constantly hyperlink automat idna
+          # 2. FIX: Automatically resolve the entire downstream dependency tree (typing_extensions, attrs, idna, etc.)
+          # We download everything, then safely purge the thin single-arch binary duplicates to prevent any install collisions.
+          mkdir -p dependency_tree
+          pip download --only-binary=:all: -d dependency_tree cryptography twisted setproctitle pyopenssl service-identity
           
-          # Force install all collected wheels cleanly without internet backtracking loops
+          # Remove duplicate core binaries from the tree folder, leaving only the pure-Python wheels intact
+          rm -f dependency_tree/cryptography-*.whl
+          rm -f dependency_tree/twisted-*.whl
+          rm -f dependency_tree/setproctitle-*.whl
+          rm -f dependency_tree/pyopenssl-*.whl
+          rm -f dependency_tree/service_identity-*.whl
+          
+          # Move the verified pure-Python dependencies into your main universal staging directory
+          mv dependency_tree/*.whl universal_wheels/
+
+          # Force install the complete, conflict-free universal environment tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
 
           # 3. Compile cffi and zope.interface from source natively
