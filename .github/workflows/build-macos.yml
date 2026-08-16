@@ -85,22 +85,23 @@ jobs:
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
           
-          # 2. FIX: Automatically resolve the entire downstream dependency tree (typing_extensions, attrs, idna, etc.)
-          # We download everything, then safely purge the thin single-arch binary duplicates to prevent any install collisions.
+          # 2. FIX: Dynamically scan Deluge's entire explicit local installation tree map.
+          # This automatically grabs pyxdg, mako, and all downstream helper requirements natively.
           mkdir -p dependency_tree
-          pip download --only-binary=:all: -d dependency_tree cryptography twisted setproctitle pyopenssl service-identity
+          pip download --only-binary=:all: -d dependency_tree .
           
-          # Remove duplicate core binaries from the tree folder, leaving only the pure-Python wheels intact
+          # Safely strip core binary duplicates out of the tree folder to prevent installation conflicts
           rm -f dependency_tree/cryptography-*.whl
           rm -f dependency_tree/twisted-*.whl
           rm -f dependency_tree/setproctitle-*.whl
           rm -f dependency_tree/pyopenssl-*.whl
           rm -f dependency_tree/service_identity-*.whl
+          rm -f dependency_tree/deluge-*.whl
           
-          # Move the verified pure-Python dependencies into your main universal staging directory
+          # Merge the verified pure-python dependencies cleanly into the main staging area
           mv dependency_tree/*.whl universal_wheels/
 
-          # Force install the complete, conflict-free universal environment tree
+          # Force install the comprehensive, conflict-free universal environment tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
 
           # 3. Compile cffi and zope.interface from source natively
