@@ -154,9 +154,26 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # 5. Package application forcing path mapping to ensure universal assets are utilized
+          # FIX: Generate an isolated runtime injection script that runs before everything else, 
+          # neutralizing the NullProvider attribute omission while keeping setuptools==81.0.0 active.
+          cat <<EOF > fix_nullprovider_rth.py
+          import sys
+          # Pre-emptively create a safe placeholder module intercept to clear the PyInstaller bug
+          import types
+          try:
+              import pkg_resources
+              if not hasattr(pkg_resources, 'NullProvider'):
+                  class NullProvider:
+                      pass
+                  pkg_resources.NullProvider = NullProvider
+          except Exception:
+              pass
+          EOF
+
+          # 5. Package application passing the explicit runtime hook script parameters
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --runtime-hook=fix_nullprovider_rth.py \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
