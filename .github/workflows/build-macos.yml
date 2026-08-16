@@ -154,23 +154,30 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate an isolated runtime injection script that runs before everything else, 
-          # neutralizing the NullProvider attribute omission while keeping setuptools==81.0.0 active.
+          # FIX: Comprehensive runtime hook to inject stubs for legacy APIs removed in setuptools 80+
+          # This allows pyi_rth_pkgres to clear its checks while keeping setuptools==81.0.0 active.
           cat <<EOF > fix_nullprovider_rth.py
           import sys
-          # Pre-emptively create a safe placeholder module intercept to clear the PyInstaller bug
-          import types
           try:
               import pkg_resources
+              
+              # Stub 1: Handle NullProvider removal
               if not hasattr(pkg_resources, 'NullProvider'):
                   class NullProvider:
                       pass
                   pkg_resources.NullProvider = NullProvider
+                  
+              # Stub 2: Handle register_loader_type removal
+              if not hasattr(pkg_resources, 'register_loader_type'):
+                  def register_loader_type(loader_type, provider_factory):
+                      pass
+                  pkg_resources.register_loader_type = register_loader_type
+                  
           except Exception:
               pass
           EOF
 
-          # 5. Package application passing the explicit runtime hook script parameters
+          # 5. Package application passing the complete runtime hook script parameters
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=fix_nullprovider_rth.py \
