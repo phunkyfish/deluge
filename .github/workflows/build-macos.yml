@@ -76,17 +76,29 @@ jobs:
           export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
           export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
           
+          # Setup baseline packaging systems
           pip install --upgrade pip wheel
           pip install "setuptools==81.0.0"
           pip install pyinstaller
+
+          # FIX STEP A: Resolve application production runtime version tags FIRST
+          if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
+            RAW_VERSION="${{ github.ref_name }}"
+            APP_VERSION="${RAW_VERSION#deluge-}"
+          else
+            APP_VERSION="2.2.0"
+          fi
+          echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+
+          # FIX STEP B: Apply the dynamic patch immediately so setup.py can always evaluate the version number
+          find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
 
           # 1. Download explicit universal2 wheels for the core compiled libraries
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
           
-          # 2. FIX: Dynamically scan Deluge's entire explicit local installation tree map.
-          # This automatically grabs pyxdg, mako, and all downstream helper requirements natively.
+          # 2. Dynamically scan Deluge's entire explicit local installation tree map safely
           mkdir -p dependency_tree
           pip download --only-binary=:all: -d dependency_tree .
           
@@ -115,16 +127,9 @@ jobs:
           RENCODE_VERSION="${RENCODE_VER_TMP%.tar.gz}"
           echo "Dynamically resolved rencode version: $RENCODE_VERSION"
 
-          # Extract the source code folder
           tar -xf "$TAR_FILE"
           cd rencode-*/
-          
-          # Delete the custom script and pyproject configurations for rencode completely
-          # We need to do this as the default build hardcodes to x86 and we want universal
-          # In the future if rencode is fixed all of this can be made more succint
           rm -f build.py pyproject.toml poetry.lock
-          
-          # Generate a setup script that compiles the pre-baked _rencode.c file directly
           cat <<EOF > setup.py
           from setuptools import setup, Extension
           setup(
@@ -134,33 +139,16 @@ jobs:
               packages=["rencode"]
           )
           EOF
-          
           python setup.py build_ext --inplace
           python setup.py install
           cd ..
 
-          # DYNAMIC FIX 1: Check for the exact upstream deluge- tag format and strip the prefix
-          if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
-            RAW_VERSION="${{ github.ref_name }}"
-            APP_VERSION="${RAW_VERSION#deluge-}"
-          else
-            # Smart baseline fallback for manual workflow_dispatch testing
-            APP_VERSION="2.2.0"
-          fi
-          echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
-          echo "Using parsed dynamic version: $APP_VERSION"
-
-          # DYNAMIC PATCH: Locate version.py wherever it lives in the workspace and force the return string
-          find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '2.2.0'/g" {} +
-
-          # Install Deluge with the forced static version patch (preserving your environment setup)
+          # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # Package application forcing path mapping to ensure universal assets are utilized
-          # FIX: We explicitly exclude pyi_rth_pkgres to prevent the NullProvider crash on modern setuptools
+          # 5. Package application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --exclude-module=pyi_rth_pkgres \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
@@ -172,12 +160,9 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
 
           echo "Executing brute-force root dist-tree recursive signing pass..."
-          
-          # FIX: Force a hardened runtime and timestamp onto EVERY single loose file in the dist output path.
-          # This catches Python frameworks, hidden binary shims, .so modules, and nested C libraries uniformly.
           find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           
-          # Final Step: Deep validation seal anchoring the top-level app bundle container explicitly with entitlements
+          # Final Step: Deep validation seal anchoring top-level app bundle container
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
