@@ -81,7 +81,7 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # FIX STEP A: Resolve application production runtime version tags FIRST
+          # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             RAW_VERSION="${{ github.ref_name }}"
             APP_VERSION="${RAW_VERSION#deluge-}"
@@ -90,40 +90,17 @@ jobs:
           fi
           echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
 
-          # FIX STEP B: Apply the dynamic patch immediately so setup.py can always evaluate the version number
+          # Apply the dynamic patch immediately so setup.py can always evaluate the version number
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
 
-          # 1. Download explicit universal2 wheels for the core compiled libraries
+          # Create a localized staging folder to hold our custom universal wheels
           mkdir -p universal_wheels
-          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity
-          
-          # 2. Dynamically scan Deluge's entire explicit local installation tree map safely
-          mkdir -p dependency_tree
-          pip download --only-binary=:all: -d dependency_tree .
-          
-          # Safely strip core binary duplicates out of the tree folder to prevent installation conflicts
-          rm -f dependency_tree/cryptography-*.whl
-          rm -f dependency_tree/twisted-*.whl
-          rm -f dependency_tree/setproctitle-*.whl
-          rm -f dependency_tree/pyopenssl-*.whl
-          rm -f dependency_tree/service_identity-*.whl
-          rm -f dependency_tree/deluge-*.whl
-          
-          # Merge the verified pure-python dependencies cleanly into the main staging area
-          mv dependency_tree/*.whl universal_wheels/
 
-          # Force install the comprehensive, conflict-free universal environment tree
-          pip install --force-reinstall --no-deps universal_wheels/*.whl
-
-          # 3. Compile cffi and zope.interface from source natively
-          pip install --no-binary cffi,zope.interface --force-reinstall cffi zope.interface
-
-          # 4. Dynamic target extraction and native pure C build for rencode
-          pip download --no-binary :all: --no-deps rencode
-          TAR_FILE=$(ls rencode-*.tar.gz | head -n 1)
+          # 2. FIX: Compile and build rencode right at the start so it is locally available
+          pip download --no-binary :all: --no-deps -d universal_wheels rencode
+          TAR_FILE=$(ls universal_wheels/rencode-*.tar.gz | head -n 1)
           echo "Found rencode archive: $TAR_FILE"
-          RENCODE_VER_TMP="${TAR_FILE#rencode-}"
+          RENCODE_VER_TMP="${TAR_FILE#universal_wheels/rencode-}"
           RENCODE_VERSION="${RENCODE_VER_TMP%.tar.gz}"
           echo "Dynamically resolved rencode version: $RENCODE_VERSION"
 
@@ -139,9 +116,40 @@ jobs:
               packages=["rencode"]
           )
           EOF
-          python setup.py build_ext --inplace
-          python setup.py install
+          
+          # Build it as a local reusable wheel asset and move it into our pool folder
+          python setup.py bdist_wheel
+          mv dist/*.whl ../universal_wheels/
           cd ..
+
+          # Also compile cffi and zope.interface cleanly as wheels into the same pool folder
+          pip wheel --no-binary cffi,zope.interface -w universal_wheels cffi zope.interface
+
+          # 3. Download explicit universal2 wheels for the core compiled libraries
+          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
+            cryptography twisted setproctitle pyopenssl service-identity
+          
+          # 4. FIX: Run the full tree scan pointing to our local wheel directory pool via --find-links
+          # This allows pip to satisfy the 'rencode', 'cffi', and 'zope.interface' requirements instantly
+          mkdir -p dependency_tree
+          pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
+          
+          # Safely strip core binary duplicates out of the tree folder to prevent installation conflicts
+          rm -f dependency_tree/cryptography-*.whl
+          rm -f dependency_tree/twisted-*.whl
+          rm -f dependency_tree/setproctitle-*.whl
+          rm -f dependency_tree/pyopenssl-*.whl
+          rm -f dependency_tree/service_identity-*.whl
+          rm -f dependency_tree/deluge-*.whl
+          rm -f dependency_tree/rencode-*.whl
+          rm -f dependency_tree/cffi-*.whl
+          rm -f dependency_tree/zope_interface-*.whl
+          
+          # Merge the verified pure-python dependencies (pyxdg, mako, etc.) cleanly into the main staging area
+          mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
+
+          # Force install the comprehensive, conflict-free universal environment tree
+          pip install --force-reinstall --no-deps universal_wheels/*.whl
 
           # Re-apply non-dependent local application installation
           pip install . --no-deps
