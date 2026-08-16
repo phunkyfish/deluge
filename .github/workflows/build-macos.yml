@@ -80,29 +80,25 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # 1. Download and isolate explicit universal2 wheels for the compiled binary layers
+          # 1. Download and isolate pre-compiled fat universal2 wheels for core dependencies
           mkdir -p universal_wheels
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
           
-          # 2. FIX: Pull all remaining pure-Python underlying dependencies automatically 
-          # without --no-deps, allowing pip to fully satisfy structural maps (like attrs, incremental, idna, etc.)
-          pip download --only-binary=:all: -d universal_wheels cryptography twisted setproctitle pyopenssl service-identity
+          # 2. FIX: Download all sub-dependencies (attrs, incremental, idna) directly to the local folder 
+          # without --no-deps, but restrict pip from downloading duplicate binary wheels of your core packages
+          pip download --only-binary=:all: -d universal_wheels attrs incremental constantly hyperlink automat idna
           
-          # Force clean universal injection into the runner global path mapping
+          # Force install all collected wheels cleanly without internet backtracking loops
           pip install --force-reinstall --no-deps universal_wheels/*.whl
 
-          # STEP 2: Compile cffi and zope.interface from source to build their true universal2 binary layers locally
+          # 3. Compile cffi and zope.interface from source natively
           pip install --no-binary cffi,zope.interface --force-reinstall cffi zope.interface
 
-          # Download rencode and compile it as a pure C extension without requiring Cython
+          # 4. Dynamic target extraction and native pure C build for rencode
           pip download --no-binary :all: --no-deps rencode
-          
-          # DYNAMIC FIX: Extract the exact archive name and parse out the version string
           TAR_FILE=$(ls rencode-*.tar.gz | head -n 1)
           echo "Found rencode archive: $TAR_FILE"
-          
-          # Strip 'rencode-' prefix and '.tar.gz' suffix to isolate the pure version number
           RENCODE_VER_TMP="${TAR_FILE#rencode-}"
           RENCODE_VERSION="${RENCODE_VER_TMP%.tar.gz}"
           echo "Dynamically resolved rencode version: $RENCODE_VERSION"
