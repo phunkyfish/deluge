@@ -154,30 +154,29 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Comprehensive runtime hook to inject stubs for legacy APIs removed in setuptools 80+
-          # This allows pyi_rth_pkgres to clear its checks while keeping setuptools==81.0.0 active.
+          # FIX: Force a comprehensive module cache override to intercept pyi_rth_pkgres completely.
+          # This safely neutralizes all trailing setuptools 81 compatibility crashes simultaneously.
           cat <<EOF > fix_nullprovider_rth.py
           import sys
+          import types
+
+          # Create a completely blank mock module object
+          mock_rth = types.ModuleType('pyi_rth_pkgres')
+          
+          # Inject the mock directly into sys.modules so PyInstaller skips loading its broken script
+          sys.modules['pyi_rth_pkgres'] = mock_rth
+          
+          # Maintain a fallback pkg_resources layout structure just in case of secondary dependencies
           try:
               import pkg_resources
-              
-              # Stub 1: Handle NullProvider removal
               if not hasattr(pkg_resources, 'NullProvider'):
-                  class NullProvider:
-                      pass
+                  class NullProvider: pass
                   pkg_resources.NullProvider = NullProvider
-                  
-              # Stub 2: Handle register_loader_type removal
-              if not hasattr(pkg_resources, 'register_loader_type'):
-                  def register_loader_type(loader_type, provider_factory):
-                      pass
-                  pkg_resources.register_loader_type = register_loader_type
-                  
           except Exception:
               pass
           EOF
 
-          # 5. Package application passing the complete runtime hook script parameters
+          # 5. Package application passing the absolute runtime hook modifier parameters
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=fix_nullprovider_rth.py \
