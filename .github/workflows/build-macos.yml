@@ -81,9 +81,8 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
-          # FIX: Find the absolute path of PyInstaller's internal rthook file on the host runner 
-          # and permanently overwrite it with an empty comment file BEFORE compilation begins.
-          RTH_PATH=$(python -c "import PyInstaller.loader.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
+          # FIX: Target the correct PyInstaller.hooks.rthooks module namespace path to overwrite the file template
+          RTH_PATH=$(python -c "import PyInstaller.hooks.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
           echo "Intercepting host PyInstaller rthook file path: $RTH_PATH"
           echo "# Emptied to support setuptools 81.0.0 compatibility" > "$RTH_PATH"
 
