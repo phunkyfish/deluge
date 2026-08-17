@@ -154,21 +154,18 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a standard-compliant PyInstaller build hook to safely strip out the broken runtime script
-          mkdir -p custom_hooks
-          cat <<EOF > custom_hooks/hook-pkg_resources.py
-          def change_runtime_hooks(run_hooks, api):
-              # Safely locate and remove the broken pyi_rth_pkgres.py from PyInstaller's compilation queue
-              return [hook for hook in run_hooks if 'pyi_rth_pkgres' not in hook]
-          EOF
-
           # 5. Package application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --additional-hooks-dir=custom_hooks \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
+
+          # FIX: Forcefully find and destroy the contents of pyi_rth_pkgres inside PyInstaller's build cache.
+          # This guarantees that the final app bundle receives a completely empty, safe script stub.
+          echo "Overriding PyInstaller internal legacy runtime hooks..."
+          find build/Deluge -name "pyi_rth_pkgres.py" -exec sh -c 'echo "# Emptied to support setuptools 81+" > {}' \;
+          find dist/Deluge.app -name "pyi_rth_pkgres.py" -exec sh -c 'echo "# Emptied to support setuptools 81+" > {}' \;
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
