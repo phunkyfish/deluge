@@ -154,15 +154,15 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate an inline, local hook to explicitly strip the broken pyi_rth_pkgres out of the compilation array
+          # FIX: Generate a standard-compliant PyInstaller build hook to safely strip out the broken runtime script
           mkdir -p custom_hooks
           cat <<EOF > custom_hooks/hook-pkg_resources.py
-          from PyInstaller.utils.hooks import del_runtime_hook
-          del_runtime_hook('pyi_rth_pkgres.py')
+          def change_runtime_hooks(run_hooks, api):
+              # Safely locate and remove the broken pyi_rth_pkgres.py from PyInstaller's compilation queue
+              return [hook for hook in run_hooks if 'pyi_rth_pkgres' not in hook]
           EOF
 
           # 5. Package application forcing path mapping to ensure universal assets are utilized
-          # Pass --additional-hooks-dir to execute our build-time runtime hook removal patch
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --additional-hooks-dir=custom_hooks \
