@@ -81,6 +81,12 @@ jobs:
           pip install "setuptools==81.0.0"
           pip install pyinstaller
 
+          # FIX: Find the absolute path of PyInstaller's internal rthook file on the host runner 
+          # and permanently overwrite it with an empty comment file BEFORE compilation begins.
+          RTH_PATH=$(python -c "import PyInstaller.loader.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
+          echo "Intercepting host PyInstaller rthook file path: $RTH_PATH"
+          echo "# Emptied to support setuptools 81.0.0 compatibility" > "$RTH_PATH"
+
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             RAW_VERSION="${{ github.ref_name }}"
@@ -96,7 +102,7 @@ jobs:
           # Create a localized staging folder to hold our custom universal wheels
           mkdir -p universal_wheels
 
-          # 2. FIX: Compile and build rencode right at the start so it is locally available
+          # 2. Compile and build rencode right at the start so it is locally available
           pip download --no-binary :all: --no-deps -d universal_wheels rencode
           TAR_FILE=$(ls universal_wheels/rencode-*.tar.gz | head -n 1)
           echo "Found rencode archive: $TAR_FILE"
@@ -117,7 +123,6 @@ jobs:
           )
           EOF
           
-          # Build it as a local reusable wheel asset and move it into our pool folder
           python setup.py bdist_wheel
           mv dist/*.whl ../universal_wheels/
           cd ..
@@ -129,8 +134,7 @@ jobs:
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
           
-          # 4. FIX: Run the full tree scan pointing to our local wheel directory pool via --find-links
-          # This allows pip to satisfy the 'rencode', 'cffi', and 'zope.interface' requirements instantly
+          # 4. Run the full tree scan pointing to our local wheel directory pool via --find-links
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
           
@@ -160,12 +164,6 @@ jobs:
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
-
-          # FIX: Forcefully find and destroy the contents of pyi_rth_pkgres inside PyInstaller's build cache.
-          # This guarantees that the final app bundle receives a completely empty, safe script stub.
-          echo "Overriding PyInstaller internal legacy runtime hooks..."
-          find build/Deluge -name "pyi_rth_pkgres.py" -exec sh -c 'echo "# Emptied to support setuptools 81+" > {}' \;
-          find dist/Deluge.app -name "pyi_rth_pkgres.py" -exec sh -c 'echo "# Emptied to support setuptools 81+" > {}' \;
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
