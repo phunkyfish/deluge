@@ -154,32 +154,11 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Force a comprehensive module cache override to intercept pyi_rth_pkgres completely.
-          # This safely neutralizes all trailing setuptools 81 compatibility crashes simultaneously.
-          cat <<EOF > fix_nullprovider_rth.py
-          import sys
-          import types
-
-          # Create a completely blank mock module object
-          mock_rth = types.ModuleType('pyi_rth_pkgres')
-          
-          # Inject the mock directly into sys.modules so PyInstaller skips loading its broken script
-          sys.modules['pyi_rth_pkgres'] = mock_rth
-          
-          # Maintain a fallback pkg_resources layout structure just in case of secondary dependencies
-          try:
-              import pkg_resources
-              if not hasattr(pkg_resources, 'NullProvider'):
-                  class NullProvider: pass
-                  pkg_resources.NullProvider = NullProvider
-          except Exception:
-              pass
-          EOF
-
-          # 5. Package application passing the absolute runtime hook modifier parameters
+          # 5. Package application and block the broken hook directly in the command line
+          # FIX: We use --exclude-runtime-hook to explicitly strip the pyi_rth_pkgres script from the bundle
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --runtime-hook=fix_nullprovider_rth.py \
+            --exclude-runtime-hook=pyi_rth_pkgres \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
