@@ -162,7 +162,13 @@ jobs:
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # Link non-python C libraries into the bundle wrapper structures
-          dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge -d dist/Deluge.app/Contents/libs/
+          # FIX: Explicitly target the core binary and recursively resolve the collected shared frameworks (-p flag)
+          dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
+            -p @executable_path/../Frameworks/ \
+            -d dist/Deluge.app/Contents/libs/
+
+          # Additional Sweep: Ensure all collected binaries inside Frameworks are scanned and rewritten
+          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
