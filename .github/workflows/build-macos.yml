@@ -162,10 +162,12 @@ jobs:
               os.environ['GI_TYPELIB_PATH'] = os.path.join(_base, 'Resources', 'gi_typelibs')
           EOF
 
-          # 5. Compile application using native multi-directory format via PyInstaller
+          # 5. Compile application forcing path mapping to ensure universal assets are utilized
+          # FIX: Added --collect-all gi to force PyInstaller to package the entire GTK/GObject framework footprint
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=gi_runtime_hook.py \
+            --collect-all gi \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
@@ -178,8 +180,7 @@ jobs:
           # Force create the framework sandbox storage area
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # FIX: Explicitly pass Homebrew library search directories (-s flags) to dylibbundler
-          # This forces the engine to locate, copy, and bundle all required GTK dependencies.
+          # Explicitly pass Homebrew library search directories (-s flags) to dylibbundler
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib \
             -s /opt/homebrew/Cellar \
