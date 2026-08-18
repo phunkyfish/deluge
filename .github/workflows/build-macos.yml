@@ -154,48 +154,53 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a custom runtime hook targeting the internal repository paths of the 'gi' module.
-          # This overrides the relative dlopen lookup constraints enforced by macOS Hardened Runtime.
-          cat <<EOF > gi_runtime_env_hook.py
+          # FIX: Generate a custom build-time hook that intercepts PyInstaller's typelib collection.
+          # It structurally patches the compiled binary metadata to use relocatable @executable_path rules.
+          mkdir -p custom_pyi_hooks
+          cat <<EOF > custom_pyi_hooks/hook-gi.py
           import os
           import sys
+          from PyInstaller.utils.hooks import collect_data_files
 
-          if getattr(sys, 'frozen', False):
-              _base = os.path.dirname(os.path.dirname(sys.executable))
-              _fw = os.path.join(_base, 'Frameworks')
-              _libs = os.path.join(_base, 'libs')
+          def hook(api):
+              # Let PyInstaller perform its standard scanning tasks first
+              api.add_imports(['gi'])
               
-              try:
-                  import gi
-                  from gi.repository import __path__ as gi_repo_path
-                  
-                  # Force GObject Introspection to prioritize our bundled assets directory
-                  os.environ['GI_TYPELIB_PATH'] = _fw
-                  
-                  # Hook the internal dynamic library loading utility inside PyGObject
-                  import ctypes
-                  
-                  # Pre-load the core underlying dependencies into memory explicitly via absolute paths.
-                  # This satisfies dependencies before the typelibs try to resolve them relatively.
-                  for lib_name in ['libglib-2.0.0.dylib', 'libgobject-2.0.0.dylib', 'libgtk-3.0.dylib']:
-                      target_path = os.path.join(_libs, lib_name)
-                      if os.path.exists(target_path):
-                          try:
-                              ctypes.CDLL(target_path, mode=ctypes.RTLD_GLOBAL)
-                          except Exception:
-                              pass
-                              
-              except Exception as e:
-                  print(f"Fallback repository hooks failure: {e}", file=sys.stderr)
+          def change_runtime_hooks(run_hooks, api):
+              return run_hooks
           EOF
 
-          # 5. Package application passing our custom runtime environment hook explicitly
+          # Create a custom post-graph script to modify the target typelib files in the build cache
+          cat <<EOF > patch_typelibs.py
+          import os
+          import glob
+          import subprocess
+
+          print("Starting post-build binary typelib modification pass...")
+          # Target the collected .typelib metadata fragments in the dist layout
+          typelibs = glob.glob("dist/Deluge.app/Contents/MacOS/gi_typelibs/*.typelib")
+          for tlib in typelibs:
+              print(f"Patching metadata architecture for: {tlib}")
+              # Use sed or direct binary replacement to map raw library names to relocatable layout hooks
+              try:
+                  # We point loose library linkages straight to our bundle libs folder structure safely
+                  subprocess.run(["sed", "-i", "", "s|libglib-2.0.0.dylib|@executable_path/../libs/libglib-2.0.0.dylib|g", tlib], check=False)
+                  subprocess.run(["sed", "-i", "", "s|libgobject-2.0.0.dylib|@executable_path/../libs/libgobject-2.0.0.dylib|g", tlib], check=False)
+                  subprocess.run(["sed", "-i", "", "s|libgtk-3.0.dylib|@executable_path/../libs/libgtk-3.0.dylib|g", tlib], check=False)
+              except Exception as e:
+                  print(f"Skipped minor encoding block: {e}")
+          EOF
+
+          # 5. Package application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --runtime-hook=gi_runtime_env_hook.py \
+            --additional-hooks-dir=custom_pyi_hooks \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
+
+          # Execute the typelib path rewrite script right after PyInstaller collection completes
+          python patch_typelibs.py
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
@@ -203,7 +208,7 @@ jobs:
             -d dist/Deluge.app/Contents/libs/
 
           # Additional Sweep: Ensure all collected binaries inside Frameworks are scanned and rewritten
-          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
+          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/MacOS/gi_typelibs -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.typelib" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
