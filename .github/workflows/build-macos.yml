@@ -154,69 +154,72 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Target libgirepository to register the explicit binary framework lookup search path.
-          # This completely overrides relative typelib queries under Hardened Runtime environments.
-          cat <<EOF > gi_runtime_typelib_anchor_hook.py
+          # FIX: Create an automated post-build processing script to rewrite plain names inside Introspection layers
+          cat <<EOF > patch_introspection.py
           import os
-          import sys
-          import ctypes
+          import glob
 
-          if getattr(sys, 'frozen', False):
-              _base = os.path.dirname(os.path.dirname(sys.executable))
-              _libs = os.path.join(_base, 'libs')
-              _fw = os.path.join(_base, 'Frameworks')
-              
-              # Force explicit environment fallbacks globally
-              os.environ['GI_TYPELIB_PATH'] = _fw
-              
-              # Map core runtime framework libraries into global memory via absolute lookups
-              loaded_libs = {}
-              core_libraries = [
-                  'libglib-2.0.0.dylib',
-                  'libgobject-2.0.0.dylib',
-                  'libgmodule-2.0.0.dylib',
-                  'libgirepository-1.0.1.dylib',
-                  'libgirepository-2.0.0.dylib',
-                  'libgio-2.0.0.dylib',
-                  'libgtk-3.0.dylib'
-              ]
-              
-              for lib_name in core_libraries:
-                  target_path = os.path.join(_libs, lib_name)
-                  if os.path.exists(target_path):
-                      try:
-                          # RTLD_GLOBAL shares these loaded symbols globally across all compiled C bindings
-                          loaded_libs[lib_name] = ctypes.CDLL(target_path, mode=ctypes.RTLD_GLOBAL)
-                      except Exception as e:
-                          print(f"Preload hook warning for {lib_name}: {e}", file=sys.stderr)
-              
-              # Intercept the GObject Introspection lookups tree using libgirepository explicitly
-              libgi = loaded_libs.get('libgirepository-1.0.1.dylib') or loaded_libs.get('libgirepository-2.0.0.dylib')
-              if libgi:
-                  try:
-                      # Call the native C library registration framework function directly
-                      libgi.g_irepository_prepend_search_path.argtypes = [ctypes.c_char_p]
-                      libgi.g_irepository_prepend_search_path(_fw.encode('utf-8'))
-                      print("Successfully registered explicit bundle framework paths to libgirepository!")
-                  except Exception as e:
-                      print(f"GIRepository path injection failed: {e}", file=sys.stderr)
+          print("Starting comprehensive build-time GObject Introspection metadata remapping...")
+          
+          # 1. Locate all typelibs and metadata segments inside the generated app bundle layout
+          search_paths = [
+              "dist/Deluge.app/Contents/MacOS/gi_typelibs/*.typelib",
+              "dist/Deluge.app/Contents/Resources/share/gir-1.0/*.gir"
+          ]
+          
+          targets = []
+          for pattern in search_paths:
+              targets.extend(glob.glob(pattern))
+
+          # 2. Force text replacements directly across all collected metadata files
+          # This maps plain names to relocatable, safe bundle paths satisfying Hardened Runtime rules
+          replacements = {
+              b"libglib-2.0.0.dylib": b"@executable_path/../libs/libglib-2.0.0.dylib",
+              b"libgobject-2.0.0.dylib": b"@executable_path/../libs/libgobject-2.0.0.dylib",
+              b"libgmodule-2.0.0.dylib": b"@executable_path/../libs/libgmodule-2.0.0.dylib",
+              b"libgio-2.0.0.dylib": b"@executable_path/../libs/libgio-2.0.0.dylib",
+              b"libgirepository-1.0.1.dylib": b"@executable_path/../libs/libgirepository-1.0.1.dylib",
+              b"libgirepository-2.0.0.dylib": b"@executable_path/../libs/libgirepository-2.0.0.dylib",
+              b"libgtk-3.0.dylib": b"@executable_path/../libs/libgtk-3.0.dylib",
+              b"libgdk-3.0.dylib": b"@executable_path/../libs/libgdk-3.0.dylib"
+          }
+
+          for target in targets:
+              print(f"Modifying library anchors inside: {target}")
+              try:
+                  with open(target, 'rb') as f:
+                      content = f.read()
+                  
+                  modified = content
+                  for old, new in replacements.items():
+                      modified = modified.replace(old, new)
+                  
+                  if modified != content:
+                      with open(target, 'wb') as f:
+                          f.write(modified)
+                      print(f"Successfully patched: {target}")
+              except Exception as e:
+                  print(f"Skipped file processing block due to: {e}")
           EOF
 
-          # 5. Package application passing our custom runtime typelib anchor hook
+          # 5. Package application cleanly pointing to global site paths and collecting GIR xml data metadata
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --runtime-hook=gi_runtime_typelib_anchor_hook.py \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
+            --add-data "/opt/homebrew/share/gir-1.0:Contents/Resources/share/gir-1.0" \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
+
+          # Execute the binary/text introspection override script
+          python patch_introspection.py
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/libs/
 
-          # Additional Sweep: Ensure all collected binaries inside Frameworks are scanned and rewritten
-          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
+          # Additional Sweep: Ensure all collected binaries inside Frameworks and Typelibs are scanned and rewritten
+          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/MacOS/gi_typelibs -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.typelib" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
