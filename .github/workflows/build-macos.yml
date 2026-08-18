@@ -96,9 +96,14 @@ jobs:
 
           # Tag the version so it's traceable as a patched build, then read it straight
           # from pyproject.toml rather than inferring it from a filename later on.
-          sed -i '' 's/^version = "1.0.8"/version = "1.0.8+universal2fix"/' pyproject.toml
+          sed -i '' -E 's/^(version = ")([^"]+)(")/\1\2+universal2fix\3/' pyproject.toml
           RENCODE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['tool']['poetry']['version'])")
           echo "Building rencode version: $RENCODE_VERSION"
+          pip install --quiet cython
+          echo "Cython version: $(cython --version 2>&1)"
+          ls -la rencode/
+          cython -3 rencode/_rencode.pyx
+          ls -la rencode/_rencode.c || { echo "::error::Cython did not produce _rencode.c"; exit 1; }
 
           # Bypass Poetry's build path entirely: poetry-core cannot tag/produce universal2
           # wheels (see python-poetry/poetry#7107), so build directly against the
