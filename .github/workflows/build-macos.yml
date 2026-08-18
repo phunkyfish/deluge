@@ -9,6 +9,11 @@ on:
 jobs:
   build-macos:
     runs-on: macos-14
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CFLAGS: "-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
+      CXXFLAGS: "-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
+      LDFLAGS: "-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -29,11 +34,6 @@ jobs:
           # Bypass Homebrew tap trust blocking warnings on the runner environment
           HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
         run: |
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          export CFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
-          export CXXFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
-          export LDFLAGS="-arch x86_64 -arch arm64 -mmacosx-version-min=11.0"
-          
           # Clean fallback list without forcing untracked third-party taps
           brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar
 
@@ -70,21 +70,8 @@ jobs:
 
       - name: Compile and Package App
         run: |
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          
-          # Force clean cross-compilation parameters globally for python pip wheel compilation
-          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
-          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
-          
-          # Setup baseline packaging systems
-          pip install --upgrade pip wheel
-          pip install "setuptools==81.0.0"
-          pip install pyinstaller
-
-          # FIX: Target the correct PyInstaller.hooks.rthooks module namespace path to overwrite the file template
-          RTH_PATH=$(python -c "import PyInstaller.hooks.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
-          echo "Intercepting host PyInstaller rthook file path: $RTH_PATH"
-          echo "# Emptied to support setuptools 81.0.0 compatibility" > "$RTH_PATH"
+          # Setup baseline packaging systems in a single call
+          pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -101,53 +88,52 @@ jobs:
           # Create a localized staging folder to hold our custom universal wheels
           mkdir -p universal_wheels
 
-          # 2. Compile and build rencode right at the start so it is locally available
-          pip download --no-binary :all: --no-deps -d universal_wheels rencode
-          TAR_FILE=$(ls universal_wheels/rencode-*.tar.gz | head -n 1)
-          echo "Found rencode archive: $TAR_FILE"
-          RENCODE_VER_TMP="${TAR_FILE#universal_wheels/rencode-}"
-          RENCODE_VERSION="${RENCODE_VER_TMP%.tar.gz}"
-          echo "Dynamically resolved rencode version: $RENCODE_VERSION"
+          # 2. FIX: Build rencode from the upstream commit that drops -march=native / SSE flags,
+          # which otherwise block a universal2 compile. See github.com/aresch/rencode commit e7ec8ea7.
+          git clone --quiet https://github.com/aresch/rencode.git
+          cd rencode
+          git checkout --quiet e7ec8ea718e73a8fee7dbc007c262e1584f7f94b
 
-          tar -xf "$TAR_FILE"
-          cd rencode-*/
-          rm -f build.py pyproject.toml poetry.lock
+          # Tag the version so it's traceable as a patched build, then read it straight
+          # from pyproject.toml rather than inferring it from a filename later on.
+          sed -i '' 's/^version = "1.0.8"/version = "1.0.8+universal2fix"/' pyproject.toml
+          RENCODE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['tool']['poetry']['version'])")
+          echo "Building rencode version: $RENCODE_VERSION"
+
+          # Bypass Poetry's build path entirely: poetry-core cannot tag/produce universal2
+          # wheels (see python-poetry/poetry#7107), so build directly against the
+          # pre-generated C source with a plain setuptools Extension instead.
           cat <<EOF > setup.py
           from setuptools import setup, Extension
           setup(
               name="rencode",
               version="${RENCODE_VERSION}",
               ext_modules=[Extension("rencode._rencode", ["rencode/_rencode.c"])],
-              packages=["rencode"]
+              packages=["rencode"],
           )
           EOF
-          
-          python setup.py bdist_wheel
+          python setup.py bdist_wheel --plat-name macosx-11.0-universal2
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # Also compile cffi and zope.interface cleanly as wheels into the same pool folder
-          pip wheel --no-binary cffi,zope.interface -w universal_wheels cffi zope.interface
+          # FIX: Compile cffi, zope.interface, AND pygobject directly from source 
+          # using our universal CFLAGS to ensure the 'gi' module is natively available
+          pip wheel --no-binary cffi,zope.interface,pygobject -w universal_wheels cffi zope.interface pygobject
 
           # 3. Download explicit universal2 wheels for the core compiled libraries
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
-          
-          # 4. Run the full tree scan pointing to our local wheel directory pool via --find-links
+
+          # 4. FIX: Run the full tree scan pointing to our local wheel directory pool via --find-links
+          # This allows pip to satisfy the 'rencode', 'cffi', and 'zope.interface' requirements instantly
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
-          
+
           # Safely strip core binary duplicates out of the tree folder to prevent installation conflicts
-          rm -f dependency_tree/cryptography-*.whl
-          rm -f dependency_tree/twisted-*.whl
-          rm -f dependency_tree/setproctitle-*.whl
-          rm -f dependency_tree/pyopenssl-*.whl
-          rm -f dependency_tree/service_identity-*.whl
-          rm -f dependency_tree/deluge-*.whl
-          rm -f dependency_tree/rencode-*.whl
-          rm -f dependency_tree/cffi-*.whl
-          rm -f dependency_tree/zope_interface-*.whl
-          
+          for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface; do
+            rm -f dependency_tree/${pkg}-*.whl
+          done
+
           # Merge the verified pure-python dependencies (pyxdg, mako, etc.) cleanly into the main staging area
           mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
 
@@ -157,9 +143,18 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
+          # FIX: Generate a standard-compliant PyInstaller build hook to safely strip out the broken runtime script
+          mkdir -p custom_hooks
+          cat <<EOF > custom_hooks/hook-pkg_resources.py
+          def change_runtime_hooks(run_hooks, api):
+              # Safely locate and remove the broken pyi_rth_pkgres.py from PyInstaller's compilation queue
+              return [hook for hook in run_hooks if 'pyi_rth_pkgres' not in hook]
+          EOF
+
           # 5. Package application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --additional-hooks-dir=custom_hooks \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
@@ -172,7 +167,7 @@ jobs:
 
           echo "Executing brute-force root dist-tree recursive signing pass..."
           find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-          
+
           # Final Step: Deep validation seal anchoring top-level app bundle container
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
@@ -180,10 +175,10 @@ jobs:
         run: |
           # 1. Create a clean, isolated staging directory for the installer payload
           mkdir -p installer_staging
-          
+
           # 2. Copy ONLY the compiled .app bundle into the clean staging path
           cp -R dist/Deluge.app installer_staging/
-          
+
           # 3. Generate the disk image targeting only the clean staging folder
           create-dmg \
             --volname "Deluge Universal Installer" \
@@ -210,23 +205,20 @@ jobs:
             --password "$APPLE_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait 2>&1)
-          
           echo "$SUBMISSION_OUT"
-          
+
           # Extract the unique submission ID character string cleanly
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
-          
+
           # 2. Check if the notarization transaction was rejected by Apple's servers
           if echo "$SUBMISSION_OUT" | grep -q "status: Invalid"; then
             echo "❌ Apple Notary Service rejected the binary asset package!"
             echo "Fetching Apple's comprehensive diagnostic failure logs..."
-            
             # Print the exact failure reasons directly into the GitHub Actions log console
             xcrun notarytool log "$SUBMISSION_ID" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_PASSWORD" \
               --team-id "$TEAM_ID"
-            
             exit 1
           fi
 
@@ -237,4 +229,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Deluge-macOS-Universal
-          path: Deluge-2.2.0-Universal.dmg
+          path: Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg
