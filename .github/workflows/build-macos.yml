@@ -154,24 +154,25 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # 5. Package universal binaries via PyInstaller pointing to the global executable path
+          # FIX: Generate a custom, early-stage runtime hook to inject DYLD path maps safely
+          # This satisfies GObject Introspection requirements while preserving Hardened Runtime rules
+          cat <<EOF > gi_runtime_env_hook.py
+          import os
+          import sys
+          if getattr(sys, 'frozen', False):
+              _base = os.path.dirname(os.path.dirname(sys.executable))
+              _libs = os.path.join(_base, 'libs')
+              _fw = os.path.join(_base, 'Frameworks')
+              os.environ['DYLD_LIBRARY_PATH'] = f"{_libs}:{_fw}:" + os.environ.get('DYLD_LIBRARY_PATH', '')
+          EOF
+
+          # 5. Package application passing our custom runtime environment hook explicitly
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --runtime-hook=gi_runtime_env_hook.py \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
-
-          # ====================================================================
-          # FIX: GOBJECT INTROSPECTION HARDENED RUNTIME ENVIRONMENT WRAPPER
-          # ====================================================================
-          # Force the main frozen entry points to explicitly prepend our app libs to the dynamic loader search paths
-          echo "Patching bundled entry-point scripts with runtime library fallback injection..."
-          
-          # Locating the entry point script packed inside the bundle and prepping environment flags
-          SED_INJECT="import os, sys\n_base = os.path.dirname(os.path.dirname(sys.executable))\n_libs = os.path.join(_base, 'libs')\n_fw = os.path.join(_base, 'Frameworks')\nos.environ['DYLD_LIBRARY_PATH'] = f'{_libs}:{_fw}:' + os.environ.get('DYLD_LIBRARY_PATH', '')"
-          
-          # Inject the paths code block right at the top of the frozen package run loops
-          sed -i '' "1s/^/${SED_INJECT}\n/" dist/Deluge.app/Contents/MacOS/Deluge
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
