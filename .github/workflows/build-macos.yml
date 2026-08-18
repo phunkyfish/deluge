@@ -154,35 +154,25 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Create a custom post-graph script to modify the target typelib files in the build cache
-          cat <<EOF > patch_typelibs.py
+          # FIX: Generate a custom, pre-emptive runtime hook that dynamically forces the execution process's 
+          # active working directory right into our bundled libraries folder before the UI framework parses.
+          cat <<EOF > gi_runtime_working_dir_hook.py
           import os
-          import glob
-          import subprocess
-
-          print("Starting post-build binary typelib modification pass...")
-          # Target the collected .typelib metadata fragments in the dist layout
-          typelibs = glob.glob("dist/Deluge.app/Contents/MacOS/gi_typelibs/*.typelib")
-          for tlib in typelibs:
-              print(f"Patching metadata architecture for: {tlib}")
-              # We point loose library linkages straight to our bundle libs folder structure safely
-              try:
-                  subprocess.run(["sed", "-i", "", "s|libglib-2.0.0.dylib|@executable_path/../libs/libglib-2.0.0.dylib|g", tlib], check=False)
-                  subprocess.run(["sed", "-i", "", "s|libgobject-2.0.0.dylib|@executable_path/../libs/libgobject-2.0.0.dylib|g", tlib], check=False)
-                  subprocess.run(["sed", "-i", "", "s|libgtk-3.0.dylib|@executable_path/../libs/libgtk-3.0.dylib|g", tlib], check=False)
-              except Exception as e:
-                  print(f"Skipped minor encoding block: {e}")
+          import sys
+          if getattr(sys, 'frozen', False):
+              _base = os.path.dirname(os.path.dirname(sys.executable))
+              _libs = os.path.join(_base, 'libs')
+              if os.path.exists(_libs):
+                  os.chdir(_libs)
           EOF
 
-          # 5. Package application cleanly relying on PyInstaller's native upstream GI hook engine
+          # 5. Package application cleanly passing our early-stage runtime working directory hook
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --runtime-hook=gi_runtime_working_dir_hook.py \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
-
-          # Execute the typelib path rewrite script right after PyInstaller collection completes
-          python patch_typelibs.py
 
           # Link non-python C libraries into the bundle wrapper structures
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
@@ -190,7 +180,7 @@ jobs:
             -d dist/Deluge.app/Contents/libs/
 
           # Additional Sweep: Ensure all collected binaries inside Frameworks are scanned and rewritten
-          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/MacOS/gi_typelibs -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.typelib" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
+          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
