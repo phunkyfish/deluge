@@ -154,15 +154,26 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # 5. Package application forcing path mapping to ensure universal assets are utilized
+          # 5. Package universal binaries via PyInstaller pointing to the global executable path
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
+          # ====================================================================
+          # FIX: GOBJECT INTROSPECTION HARDENED RUNTIME ENVIRONMENT WRAPPER
+          # ====================================================================
+          # Force the main frozen entry points to explicitly prepend our app libs to the dynamic loader search paths
+          echo "Patching bundled entry-point scripts with runtime library fallback injection..."
+          
+          # Locating the entry point script packed inside the bundle and prepping environment flags
+          SED_INJECT="import os, sys\n_base = os.path.dirname(os.path.dirname(sys.executable))\n_libs = os.path.join(_base, 'libs')\n_fw = os.path.join(_base, 'Frameworks')\nos.environ['DYLD_LIBRARY_PATH'] = f'{_libs}:{_fw}:' + os.environ.get('DYLD_LIBRARY_PATH', '')"
+          
+          # Inject the paths code block right at the top of the frozen package run loops
+          sed -i '' "1s/^/${SED_INJECT}\n/" dist/Deluge.app/Contents/MacOS/Deluge
+
           # Link non-python C libraries into the bundle wrapper structures
-          # FIX: Explicitly target the core binary and recursively resolve the collected shared frameworks (-p flag)
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/libs/
