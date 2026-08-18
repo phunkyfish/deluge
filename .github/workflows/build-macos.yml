@@ -206,13 +206,12 @@ jobs:
 
       - name: Build Outer DMG Installer
         run: |
-          # 1. Create a clean, isolated staging directory for the installer payload
-          mkdir -p installer_staging
-
-          # 2. Copy ONLY the compiled .app bundle into the clean staging path
-          cp -R dist/Deluge.app installer_staging/
-
-          # 3. Generate the disk image targeting only the clean staging folder
+          # 1. Create a native ignore descriptor inside the true build tree to hide PyInstaller's loose folder layouts
+          cat <<EOF > dist/.dmgignore
+          Deluge
+          EOF
+          
+          # 2. FIX: Target the raw, original dist/ directory to preserve all 30MB+ framework binaries and linkages
           create-dmg \
             --volname "Deluge Universal Installer" \
             --window-pos 200 120 \
@@ -221,7 +220,7 @@ jobs:
             --icon "Deluge.app" 200 190 \
             --app-drop-link 600 190 \
             "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
-            "installer_staging/"
+            "dist/"
 
           # Force-sign the completed outer DMG file container smoothly via native codesign
           codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
