@@ -73,6 +73,11 @@ jobs:
           # Setup baseline packaging systems in a single call
           pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
+          # FIX: Target the correct PyInstaller.hooks.rthooks module namespace path to overwrite the file template
+          RTH_PATH=$(python -c "import PyInstaller.hooks.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
+          echo "Intercepting host PyInstaller rthook file path: $RTH_PATH"
+          echo "# Emptied to support setuptools 81.0.0 compatibility" > "$RTH_PATH"
+
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             RAW_VERSION="${{ github.ref_name }}"
@@ -149,18 +154,9 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a standard-compliant PyInstaller build hook to safely strip out the broken runtime script
-          mkdir -p custom_hooks
-          cat <<EOF > custom_hooks/hook-pkg_resources.py
-          def change_runtime_hooks(run_hooks, api):
-              # Safely locate and remove the broken pyi_rth_pkgres.py from PyInstaller's compilation queue
-              return [hook for hook in run_hooks if 'pyi_rth_pkgres' not in hook]
-          EOF
-
           # 5. Package application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --additional-hooks-dir=custom_hooks \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
