@@ -154,23 +154,7 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a custom build-time hook that intercepts PyInstaller's typelib collection.
-          # It structurally patches the compiled binary metadata to use relocatable @executable_path rules.
-          mkdir -p custom_pyi_hooks
-          cat <<EOF > custom_pyi_hooks/hook-gi.py
-          import os
-          import sys
-          from PyInstaller.utils.hooks import collect_data_files
-
-          def hook(api):
-              # Let PyInstaller perform its standard scanning tasks first
-              api.add_imports(['gi'])
-              
-          def change_runtime_hooks(run_hooks, api):
-              return run_hooks
-          EOF
-
-          # Create a custom post-graph script to modify the target typelib files in the build cache
+          # FIX: Create a custom post-graph script to modify the target typelib files in the build cache
           cat <<EOF > patch_typelibs.py
           import os
           import glob
@@ -181,9 +165,8 @@ jobs:
           typelibs = glob.glob("dist/Deluge.app/Contents/MacOS/gi_typelibs/*.typelib")
           for tlib in typelibs:
               print(f"Patching metadata architecture for: {tlib}")
-              # Use sed or direct binary replacement to map raw library names to relocatable layout hooks
+              # We point loose library linkages straight to our bundle libs folder structure safely
               try:
-                  # We point loose library linkages straight to our bundle libs folder structure safely
                   subprocess.run(["sed", "-i", "", "s|libglib-2.0.0.dylib|@executable_path/../libs/libglib-2.0.0.dylib|g", tlib], check=False)
                   subprocess.run(["sed", "-i", "", "s|libgobject-2.0.0.dylib|@executable_path/../libs/libgobject-2.0.0.dylib|g", tlib], check=False)
                   subprocess.run(["sed", "-i", "", "s|libgtk-3.0.dylib|@executable_path/../libs/libgtk-3.0.dylib|g", tlib], check=False)
@@ -191,10 +174,9 @@ jobs:
                   print(f"Skipped minor encoding block: {e}")
           EOF
 
-          # 5. Package application forcing path mapping to ensure universal assets are utilized
+          # 5. Package application cleanly relying on PyInstaller's native upstream GI hook engine
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            --additional-hooks-dir=custom_pyi_hooks \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
