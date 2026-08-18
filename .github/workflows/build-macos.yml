@@ -73,11 +73,6 @@ jobs:
           # Setup baseline packaging systems in a single call
           pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
-          # FIX: Target the correct PyInstaller.hooks.rthooks module namespace path to overwrite the file template
-          RTH_PATH=$(python -c "import PyInstaller.hooks.rthooks as r; import os; print(os.path.join(os.path.dirname(r.__file__), 'pyi_rth_pkgres.py'))")
-          echo "Intercepting host PyInstaller rthook file path: $RTH_PATH"
-          echo "# Emptied to support setuptools 81.0.0 compatibility" > "$RTH_PATH"
-
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             RAW_VERSION="${{ github.ref_name }}"
@@ -154,79 +149,58 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Create an automated post-build processing script to rewrite plain names inside Introspection layers
-          cat <<EOF > patch_introspection.py
-          import os
-          import glob
-
-          print("Starting comprehensive build-time GObject Introspection metadata remapping...")
-          
-          # 1. Locate all typelibs and metadata segments inside the generated app bundle layout
-          search_paths = [
-              "dist/Deluge.app/Contents/MacOS/gi_typelibs/*.typelib",
-              "dist/Deluge.app/Contents/Resources/share/gir-1.0/*.gir"
-          ]
-          
-          targets = []
-          for pattern in search_paths:
-              targets.extend(glob.glob(pattern))
-
-          # 2. Force text replacements directly across all collected metadata files
-          # This maps plain names to relocatable, safe bundle paths satisfying Hardened Runtime rules
-          replacements = {
-              b"libglib-2.0.0.dylib": b"@executable_path/../libs/libglib-2.0.0.dylib",
-              b"libgobject-2.0.0.dylib": b"@executable_path/../libs/libgobject-2.0.0.dylib",
-              b"libgmodule-2.0.0.dylib": b"@executable_path/../libs/libgmodule-2.0.0.dylib",
-              b"libgio-2.0.0.dylib": b"@executable_path/../libs/libgio-2.0.0.dylib",
-              b"libgirepository-1.0.1.dylib": b"@executable_path/../libs/libgirepository-1.0.1.dylib",
-              b"libgirepository-2.0.0.dylib": b"@executable_path/../libs/libgirepository-2.0.0.dylib",
-              b"libgtk-3.0.dylib": b"@executable_path/../libs/libgtk-3.0.dylib",
-              b"libgdk-3.0.dylib": b"@executable_path/../libs/libgdk-3.0.dylib"
-          }
-
-          for target in targets:
-              print(f"Modifying library anchors inside: {target}")
-              try:
-                  with open(target, 'rb') as f:
-                      content = f.read()
-                  
-                  modified = content
-                  for old, new in replacements.items():
-                      modified = modified.replace(old, new)
-                  
-                  if modified != content:
-                      with open(target, 'wb') as f:
-                          f.write(modified)
-                      print(f"Successfully patched: {target}")
-              except Exception as e:
-                  print(f"Skipped file processing block due to: {e}")
-          EOF
-
-          # 5. Package application cleanly pointing to global site paths and collecting GIR xml data metadata
+          # 5. Compile application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
-            --add-data "/opt/homebrew/share/gir-1.0:Contents/Resources/share/gir-1.0" \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
-          # Execute the binary/text introspection override script
-          python patch_introspection.py
-
-          # Link non-python C libraries into the bundle wrapper structures
+          # ====================================================================
+          # PRODUCTION FIXED TARGET LINKING: Move all .dylibs directly into Frameworks
+          # ====================================================================
+          echo "Linking non-python dependencies directly into the Frameworks sandbox directory..."
+          
+          # Fix the primary binary link to route directly inside the Frameworks sandbox structure
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/libs/
+            -d dist/Deluge.app/Contents/Frameworks/
 
-          # Additional Sweep: Ensure all collected binaries inside Frameworks and Typelibs are scanned and rewritten
-          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/MacOS/gi_typelibs -type f \( -name "*.dylib" -o -name "*.so" -o -name "*.typelib" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/libs/ \; 2>/dev/null || true
+          # Exhaustively sweep all collected .dylib and .so plugin extensions inside the bundle tree
+          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/Resources -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+
+          # ====================================================================
+          # SANDBOX WRAPPER: Intercept binary launch to override GObject constraints
+          # ====================================================================
+          echo "Injecting native secure launcher shell script wrapper..."
+          
+          # Move the compiled binary payload shim out of the way safely
+          mv dist/Deluge.app/Contents/MacOS/Deluge dist/Deluge.app/Contents/MacOS/Deluge.bin
+
+          # Generate a secure shell script wrapper to force lookups straight to the sandboxed Frameworks folder
+          cat <<'EOF' > dist/Deluge.app/Contents/MacOS/Deluge
+          #!/bin/bash
+          _base=$(dirname "$0")
+          _bundle=$(dirname "$_base")
+          
+          # Force GObject Introspection to prioritize the sandboxed internal payload frameworks
+          export DYLD_LIBRARY_PATH="$_bundle/Frameworks:$_bundle/MacOS:$_bundle/Resources/gi_typelibs:$DYLD_LIBRARY_PATH"
+          export DYLD_FRAMEWORK_PATH="$_bundle/Frameworks:$DYLD_FRAMEWORK_PATH"
+          export GI_TYPELIB_PATH="$_bundle/Frameworks:$_bundle/Resources/gi_typelibs"
+          
+          # Hand control over to the actual compiled application binary layer smoothly
+          exec "$_base/Deluge.bin" "$@"
+          EOF
+          
+          # Make the new launcher script fully executable
+          chmod +x dist/Deluge.app/Contents/MacOS/Deluge
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
 
           echo "Executing brute-force root dist-tree recursive signing pass..."
           find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-
+          
           # Final Step: Deep validation seal anchoring top-level app bundle container
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
