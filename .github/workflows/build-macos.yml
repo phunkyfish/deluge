@@ -154,16 +154,39 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a custom, early-stage runtime hook to inject DYLD path maps safely
-          # This satisfies GObject Introspection requirements while preserving Hardened Runtime rules
+          # FIX: Generate a custom runtime hook targeting the internal repository paths of the 'gi' module.
+          # This overrides the relative dlopen lookup constraints enforced by macOS Hardened Runtime.
           cat <<EOF > gi_runtime_env_hook.py
           import os
           import sys
+
           if getattr(sys, 'frozen', False):
               _base = os.path.dirname(os.path.dirname(sys.executable))
-              _libs = os.path.join(_base, 'libs')
               _fw = os.path.join(_base, 'Frameworks')
-              os.environ['DYLD_LIBRARY_PATH'] = f"{_libs}:{_fw}:" + os.environ.get('DYLD_LIBRARY_PATH', '')
+              _libs = os.path.join(_base, 'libs')
+              
+              try:
+                  import gi
+                  from gi.repository import __path__ as gi_repo_path
+                  
+                  # Force GObject Introspection to prioritize our bundled assets directory
+                  os.environ['GI_TYPELIB_PATH'] = _fw
+                  
+                  # Hook the internal dynamic library loading utility inside PyGObject
+                  import ctypes
+                  
+                  # Pre-load the core underlying dependencies into memory explicitly via absolute paths.
+                  # This satisfies dependencies before the typelibs try to resolve them relatively.
+                  for lib_name in ['libglib-2.0.0.dylib', 'libgobject-2.0.0.dylib', 'libgtk-3.0.dylib']:
+                      target_path = os.path.join(_libs, lib_name)
+                      if os.path.exists(target_path):
+                          try:
+                              ctypes.CDLL(target_path, mode=ctypes.RTLD_GLOBAL)
+                          except Exception:
+                              pass
+                              
+              except Exception as e:
+                  print(f"Fallback repository hooks failure: {e}", file=sys.stderr)
           EOF
 
           # 5. Package application passing our custom runtime environment hook explicitly
