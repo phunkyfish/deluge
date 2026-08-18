@@ -171,20 +171,27 @@ jobs:
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # ====================================================================
-          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER
+          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
           # ====================================================================
           echo "Executing native shared library consolidation passes..."
           
           # Force create the framework sandbox storage area
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # Explicitly map the core binary output straight to our new Frameworks storage location
+          # FIX: Explicitly pass Homebrew library search directories (-s flags) to dylibbundler
+          # This forces the engine to locate, copy, and bundle all required GTK dependencies.
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
+            -s /opt/homebrew/lib \
+            -s /opt/homebrew/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
-          # Exhaustively loop over every loose .so extension and re-link its internal hooks
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+          # Exhaustively loop over every loose .so and .dylib extension inside the app layout to ensure full collection
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
+            -s /opt/homebrew/lib \
+            -s /opt/homebrew/Cellar \
+            -p @executable_path/../Frameworks/ \
+            -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
