@@ -149,55 +149,47 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # 5. Compile application forcing path mapping to ensure universal assets are utilized
+          # ====================================================================
+          # NATIVE GOBJECT INTROSPECTION RUNTIME PATH HOOK
+          # ====================================================================
+          # This configures Python itself to correctly route GObject lookups 
+          # within a signed, hardened binary wrapper.
+          cat <<EOF > gi_runtime_hook.py
+          import os
+          import sys
+          if getattr(sys, 'frozen', False):
+              _base = os.path.dirname(os.path.dirname(sys.executable))
+              os.environ['GI_TYPELIB_PATH'] = os.path.join(_base, 'Resources', 'gi_typelibs')
+          EOF
+
+          # 5. Compile application using native multi-directory format via PyInstaller
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
+            --runtime-hook=gi_runtime_hook.py \
             --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
             --add-data "deluge/ui/data:deluge/ui/data" \
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # ====================================================================
-          # PRODUCTION FIXED TARGET LINKING: Move all .dylibs directly into Frameworks
+          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER
           # ====================================================================
-          echo "Linking non-python dependencies directly into the Frameworks sandbox directory..."
+          echo "Executing native shared library consolidation passes..."
           
-          # Fix the primary binary link to route directly inside the Frameworks sandbox structure
+          # Force create the framework sandbox storage area
+          mkdir -p dist/Deluge.app/Contents/Frameworks
+          
+          # Explicitly map the core binary output straight to our new Frameworks storage location
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
-          # Exhaustively sweep all collected .dylib and .so plugin extensions inside the bundle tree
-          find dist/Deluge.app/Contents/Frameworks dist/Deluge.app/Contents/Resources -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
-
-          # ====================================================================
-          # SANDBOX WRAPPER: Intercept binary launch to override GObject constraints
-          # ====================================================================
-          echo "Injecting native secure launcher shell script wrapper..."
-          
-          # Move the compiled binary payload shim out of the way safely
-          mv dist/Deluge.app/Contents/MacOS/Deluge dist/Deluge.app/Contents/MacOS/Deluge.bin
-
-          # Generate a secure shell script wrapper to force lookups straight to the sandboxed Frameworks folder
-          cat <<'EOF' > dist/Deluge.app/Contents/MacOS/Deluge
-          #!/bin/bash
-          _base=$(dirname "$0")
-          _bundle=$(dirname "$_base")
-          
-          # Force GObject Introspection to prioritize the sandboxed internal payload frameworks
-          export DYLD_LIBRARY_PATH="$_bundle/Frameworks:$_bundle/MacOS:$_bundle/Resources/gi_typelibs:$DYLD_LIBRARY_PATH"
-          export DYLD_FRAMEWORK_PATH="$_bundle/Frameworks:$DYLD_FRAMEWORK_PATH"
-          export GI_TYPELIB_PATH="$_bundle/Frameworks:$_bundle/Resources/gi_typelibs"
-          
-          # Hand control over to the actual compiled application binary layer smoothly
-          exec "$_base/Deluge.bin" "$@"
-          EOF
-          
-          # Make the new launcher script fully executable
-          chmod +x dist/Deluge.app/Contents/MacOS/Deluge
+          # Exhaustively loop over every loose .so extension and re-link its internal hooks
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} -p @executable_path/../Frameworks/ -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
 
+          # 6. Apply codesign recursively across the true compiled binaries
           echo "Executing brute-force root dist-tree recursive signing pass..."
           find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           
