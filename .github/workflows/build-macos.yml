@@ -154,8 +154,8 @@ jobs:
           # Re-apply non-dependent local application installation
           pip install . --no-deps
 
-          # FIX: Generate a custom runtime hook utilizing absolute ctypes handles and 
-          # g_irepository_prepend_search_path to resolve the Hardened Runtime typelib lookup block.
+          # FIX: Target libgirepository to register the explicit binary framework lookup search path.
+          # This completely overrides relative typelib queries under Hardened Runtime environments.
           cat <<EOF > gi_runtime_typelib_anchor_hook.py
           import os
           import sys
@@ -166,32 +166,43 @@ jobs:
               _libs = os.path.join(_base, 'libs')
               _fw = os.path.join(_base, 'Frameworks')
               
-              # Set standard environment fallbacks
+              # Force explicit environment fallbacks globally
               os.environ['GI_TYPELIB_PATH'] = _fw
               
-              # Explicitly load core system frameworks via absolute paths into global runtime memory
+              # Map core runtime framework libraries into global memory via absolute lookups
               loaded_libs = {}
-              for lib_name in ['libglib-2.0.0.dylib', 'libgobject-2.0.0.dylib', 'libgmodule-2.0.0.dylib', 'libgio-2.0.0.dylib', 'libgtk-3.0.dylib']:
+              core_libraries = [
+                  'libglib-2.0.0.dylib',
+                  'libgobject-2.0.0.dylib',
+                  'libgmodule-2.0.0.dylib',
+                  'libgirepository-1.0.1.dylib',
+                  'libgirepository-2.0.0.dylib',
+                  'libgio-2.0.0.dylib',
+                  'libgtk-3.0.dylib'
+              ]
+              
+              for lib_name in core_libraries:
                   target_path = os.path.join(_libs, lib_name)
                   if os.path.exists(target_path):
                       try:
-                          # RTLD_GLOBAL binds these symbols permanently to the active process space
+                          # RTLD_GLOBAL shares these loaded symbols globally across all compiled C bindings
                           loaded_libs[lib_name] = ctypes.CDLL(target_path, mode=ctypes.RTLD_GLOBAL)
                       except Exception as e:
-                          print(f"Preload warning for {lib_name}: {e}", file=sys.stderr)
+                          print(f"Preload hook warning for {lib_name}: {e}", file=sys.stderr)
               
-              # Force GObject Introspection's internal C layer to search our Frameworks folder
-              if 'libgobject-2.0.0.dylib' in loaded_libs:
+              # Intercept the GObject Introspection lookups tree using libgirepository explicitly
+              libgi = loaded_libs.get('libgirepository-1.0.1.dylib') or loaded_libs.get('libgirepository-2.0.0.dylib')
+              if libgi:
                   try:
-                      libgobject = loaded_libs['libgobject-2.0.0.dylib']
-                      # Bind the native C layout search configuration method
-                      libgobject.g_irepository_prepend_search_path.argtypes = [ctypes.c_char_p]
-                      libgobject.g_irepository_prepend_search_path(repr(_fw).encode('utf-8'))
+                      # Call the native C library registration framework function directly
+                      libgi.g_irepository_prepend_search_path.argtypes = [ctypes.c_char_p]
+                      libgi.g_irepository_prepend_search_path(_fw.encode('utf-8'))
+                      print("Successfully registered explicit bundle framework paths to libgirepository!")
                   except Exception as e:
-                      print(f"GIRepository route registration failed: {e}", file=sys.stderr)
+                      print(f"GIRepository path injection failed: {e}", file=sys.stderr)
           EOF
 
-          # 5. Package application cleanly passing our custom runtime typelib anchor hook
+          # 5. Package application passing our custom runtime typelib anchor hook
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=gi_runtime_typelib_anchor_hook.py \
