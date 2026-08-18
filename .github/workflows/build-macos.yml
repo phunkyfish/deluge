@@ -103,6 +103,7 @@ jobs:
           # Bypass Poetry's build path entirely: poetry-core cannot tag/produce universal2
           # wheels (see python-poetry/poetry#7107), so build directly against the
           # pre-generated C source with a plain setuptools Extension instead.
+          rm -f build.py pyproject.toml poetry.lock
           cat <<EOF > setup.py
           from setuptools import setup, Extension
           setup(
