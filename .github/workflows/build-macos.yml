@@ -170,7 +170,7 @@ jobs:
               os.environ['GI_TYPELIB_PATH'] = f"{_fw}:{_typelibs}"
           EOF
 
-          # 5. Package application natively with the custom runtime environment hook injected
+          # 5. Compile application forcing path mapping to ensure universal assets are utilized
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=gi_runtime_hook.py \
@@ -180,21 +180,27 @@ jobs:
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # ====================================================================
+          # FORCE PLATFORM BINARY INJECTION (Resolves the 8MB Dropout)
+          # ====================================================================
+          echo "Force-collecting missing Homebrew shared framework libraries..."
+          mkdir -p dist/Deluge.app/Contents/Frameworks
+
+          # Physically copy the core GTK, GLib, and Cairo shared objects straight into the app bundle
+          find /opt/homebrew/lib /opt/homebrew/Cellar -type f \( -name "libgtk-3.0.dylib" -o -name "libglib-2.0.0.dylib" -o -name "libgobject-2.0.0.dylib" -o -name "libgmodule-2.0.0.dylib" -o -name "libgio-2.0.0.dylib" -o -name "libcairo.2.dylib" -o -name "libgdk-3.0.dylib" -o -name "libgdk_pixbuf-2.0.0.dylib" -o -name "libpango-1.0.0.dylib" -o -name "libpangocairo-1.0.0.dylib" -o -name "libharfbuzz.0.dylib" -o -name "libintl.8.dylib" \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+
+          # ====================================================================
           # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
           # ====================================================================
           echo "Executing native shared library consolidation passes..."
           
-          # Force create the framework sandbox storage area
-          mkdir -p dist/Deluge.app/Contents/Frameworks
-          
-          # Link the primary application binary dependencies directly inside the Frameworks sandbox structure
+          # Fix the primary executable binary link to point to our framework repository
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib \
             -s /opt/homebrew/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
-          # Exhaustively loop over every loose .so and .dylib extension inside the app layout to ensure full collection
+          # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib \
             -s /opt/homebrew/Cellar \
