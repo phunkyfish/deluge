@@ -217,31 +217,27 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # 1. Submit the disk image utilizing clear environment variable parameter mappings
-          SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$TEAM_ID" \
-            --wait 2>&1)
+          # 1. Execute submission inside single quotes to protect raw string inputs from shell expansion
+          echo "Submitting installer package to Apple Notary Service..."
           
+          SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${TEAM_ID}" --wait 2>&1)
+          
+          # Print the filtered result to inspect processing tracking status safely
+          echo "Notary API Server Response Log:"
           echo "$SUBMISSION_OUT"
           
-          # Extract the unique submission ID character string cleanly
+          # Isolate unique submission token id
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
           
-          # 2. Check if the notarization transaction was rejected by Apple's servers
+          # 2. Evaluate if rejection status was thrown back by Apple validators
           if echo "$SUBMISSION_OUT" | grep -q "status: Invalid"; then
             echo "❌ Apple Notary Service rejected the binary asset package!"
-            echo "Fetching Apple's comprehensive diagnostic failure logs..."
-            
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_PASSWORD" \
-              --team-id "$TEAM_ID"
+            echo "Extracting comprehensive diagnostics logs..."
+            xcrun notarytool log "$SUBMISSION_ID" --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${TEAM_ID}"
             exit 1
           fi
           
-          # 3. Staple the approved ticket only if the status clears successfully
+          # 3. Securely affix approved cloud state ticket to the container filesystem layout
           xcrun stapler staple "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Upload Finished DMG Artifact
