@@ -206,12 +206,13 @@ jobs:
 
       - name: Build Outer DMG Installer
         run: |
-          # 1. Create a native ignore descriptor inside the true build tree to hide PyInstaller's loose folder layouts
-          cat <<EOF > dist/.dmgignore
-          Deluge
-          EOF
+          # 1. Create a clean, isolated staging directory for the installer payload
+          mkdir -p installer_staging
           
-          # 2. FIX: Target the raw, original dist/ directory to preserve all 30MB+ framework binaries and linkages
+          # 2. FIX: Use 'ditto' to safely copy the app bundle while preserving all 30MB+ signatures and framework metadata
+          ditto dist/Deluge.app installer_staging/Deluge.app
+          
+          # 3. Generate the disk image targeting ONLY the clean staging folder
           create-dmg \
             --volname "Deluge Universal Installer" \
             --window-pos 200 120 \
@@ -220,9 +221,9 @@ jobs:
             --icon "Deluge.app" 200 190 \
             --app-drop-link 600 190 \
             "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
-            "dist/"
+            "installer_staging/"
 
-          # Force-sign the completed outer DMG file container smoothly via native codesign
+          # Force-sign the completed outer DMG file container via native codesign
           codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Notarize and Staple DMG
