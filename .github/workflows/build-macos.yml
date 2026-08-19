@@ -180,13 +180,33 @@ jobs:
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # ====================================================================
-          # FORCE PLATFORM BINARY INJECTION (Resolves the 8MB Dropout)
+          # NATIVE ARCHITECTURE FRAMEWORK INJECTION (Force 30MB+ Collection)
           # ====================================================================
-          echo "Force-collecting missing Homebrew shared framework libraries..."
+          echo "Force-collecting missing Homebrew shared framework libraries natively..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
 
-          # Physically copy the core GTK, GLib, and Cairo shared objects straight into the app bundle
-          find /opt/homebrew/lib /opt/homebrew/Cellar -type f \( -name "libgtk-3.0.dylib" -o -name "libglib-2.0.0.dylib" -o -name "libgobject-2.0.0.dylib" -o -name "libgmodule-2.0.0.dylib" -o -name "libgio-2.0.0.dylib" -o -name "libcairo.2.dylib" -o -name "libgdk-3.0.dylib" -o -name "libgdk_pixbuf-2.0.0.dylib" -o -name "libpango-1.0.0.dylib" -o -name "libpangocairo-1.0.0.dylib" -o -name "libharfbuzz.0.dylib" -o -name "libintl.8.dylib" \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+          # Explicitly extract files using concrete local paths to bypass any Rosetta emulation redirects
+          # We search both /opt/homebrew (Apple Silicon) and /usr/local (Intel fallback) explicitly
+          BREW_LIBS="/opt/homebrew/lib /opt/homebrew/Cellar /usr/local/lib /usr/local/Cellar"
+          
+          find $BREW_LIBS -type f \( \
+            -name "libgtk-3.0.dylib" -o \
+            -name "libglib-2.0.0.dylib" -o \
+            -name "libgobject-2.0.0.dylib" -o \
+            -name "libgmodule-2.0.0.dylib" -o \
+            -name "libgio-2.0.0.dylib" -o \
+            -name "libcairo.2.dylib" -o \
+            -name "libgdk-3.0.dylib" -o \
+            -name "libgdk_pixbuf-2.0.0.dylib" -o \
+            -name "libpango-1.0.0.dylib" -o \
+            -name "libpangocairo-1.0.0.dylib" -o \
+            -name "libharfbuzz.0.dylib" -o \
+            -name "libintl.8.dylib" \
+            \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+
+          # Print the folder contents to the console so we can verify the files are physically copied
+          echo "Current contents of Frameworks sandbox directory:"
+          ls -lh dist/Deluge.app/Contents/Frameworks/
 
           # ====================================================================
           # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
@@ -195,15 +215,13 @@ jobs:
           
           # Fix the primary executable binary link to point to our framework repository
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
-            -s /opt/homebrew/lib \
-            -s /opt/homebrew/Cellar \
+            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
           # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
-            -s /opt/homebrew/lib \
-            -s /opt/homebrew/Cellar \
+            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
