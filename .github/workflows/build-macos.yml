@@ -31,11 +31,23 @@ jobs:
 
       - name: Install System Dependencies
         env:
-          # Bypass Homebrew tap trust blocking warnings on the runner environment
           HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
+          HOMEBREW_NO_ANALYTICS: 1
         run: |
-          # Clean fallback list without forcing untracked third-party taps
-          brew install --formula --build-from-source dylibbundler create-dmg gtk+3 adwaita-icon-theme libtorrent-rasterbar
+          # 1. Configure the explicit multi-architecture compilation flags for Homebrew's internal build systems
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
+          export CXXFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
+          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
+          
+          echo "Compiling system frameworks as true universal2 fat binary structures..."
+          
+          # 2. Force install dylibbundler and create-dmg cleanly
+          brew install --formula dylibbundler create-dmg libtorrent-rasterbar
+          
+          # 3. FIX: Force Homebrew to compile the core GTK dependencies directly from source 
+          # using our universal CFLAGS, ensuring both arm64 and x86_64 architecture slices exist.
+          brew install --formula --build-from-source glib cairo pango gdk-pixbuf gobject-introspection gtk+3 adwaita-icon-theme
 
       - name: Import Apple Developer Certificate
         env:
