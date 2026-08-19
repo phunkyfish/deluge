@@ -211,6 +211,28 @@ jobs:
           # Final Step: Deep validation seal anchoring top-level app bundle container
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
+      - name: Build Outer DMG Installer
+        run: |
+          # 1. Create a pristine, isolated directory for the installer payload
+          mkdir -p secure_dmg_staging
+          
+          # 2. Use rsync to safely copy the app bundle while preserving signatures and extended attributes
+          rsync -aHAX dist/Deluge.app secure_dmg_staging/
+          
+          # 3. Generate the disk image pointing exclusively to the clean staging folder
+          create-dmg \
+            --volname "Deluge Universal Installer" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 100 \
+            --icon "Deluge.app" 200 190 \
+            --app-drop-link 600 190 \
+            "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
+            "secure_dmg_staging/"
+
+          # 4. Force-sign the completed outer DMG file container
+          codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
+
       - name: Notarize and Staple DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -219,8 +241,7 @@ jobs:
         run: |
           echo "Submitting installer package to Apple Notary Service..."
           
-          # 1. Establish the credential verification layout strings dynamically
-          # Enforcing exact parameter assignments to bypass CLI argument dropping issues
+          # FIX: Explicitly consume the environment variable so the upload target matches the built asset perfectly
           SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
@@ -233,7 +254,7 @@ jobs:
           # Isolate unique submission token id
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
           
-          # 2. Evaluate if rejection status was thrown back by Apple validators
+          # Evaluate if rejection status was thrown back by Apple validators
           if echo "$SUBMISSION_OUT" | grep -q "status: Invalid" || [ -z "$SUBMISSION_ID" ]; then
             echo "❌ Apple Notary Service credentials or binary validation failed!"
             if [ ! -z "$SUBMISSION_ID" ]; then
@@ -243,7 +264,7 @@ jobs:
             exit 1
           fi
           
-          # 3. Securely affix approved cloud state ticket to the container filesystem layout
+          # Securely affix approved cloud state ticket to the container filesystem layout
           xcrun stapler staple "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
       - name: Upload Finished DMG Artifact
