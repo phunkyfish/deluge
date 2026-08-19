@@ -222,8 +222,15 @@ jobs:
           # 1. Create a pristine, isolated directory for the installer payload
           mkdir -p secure_dmg_staging
           
-          # 2. FIX: Use native 'ditto' instead of rsync to safely stage the bundle with all signatures intact
+          # 2. Use native 'ditto' to safely copy the app bundle while preserving all signatures
           ditto dist/Deluge.app secure_dmg_staging/Deluge.app
+          
+          # ====================================================================
+          # CRITICAL STORAGE PACKAGING FIX: Force write/execute permissions
+          # This stops the macOS compression engine from stripping Framework binaries!
+          # ====================================================================
+          echo "Synchronizing file system permission bits across staging folder asset elements..."
+          chmod -R 755 secure_dmg_staging/Deluge.app
           
           # 3. Generate the disk image pointing exclusively to the clean staging folder
           create-dmg \
