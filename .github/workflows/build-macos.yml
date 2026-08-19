@@ -166,7 +166,6 @@ jobs:
           EOF
 
           # 5. Compile application forcing environment variables to resolve PyInstaller's GI internal hook checks
-          # FIX: Export paths directly to the pyinstaller invocation process environmental context
           export DYLD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
           export GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0:/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
           
@@ -184,22 +183,22 @@ jobs:
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # FIX STEP A: Run dylibbundler FIRST to clear its directory cleansing phase safely
+          # Fix the primary executable binary link path parameters
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
-          # FIX STEP B: Inject the heavy framework binary dependencies SECOND so they cannot be deleted
+          # Inject the heavy framework binary dependencies so they are bundled safely
           BREW_LIBS="/opt/homebrew/lib /opt/homebrew/Cellar /usr/local/lib /usr/local/Cellar"
           find $BREW_LIBS -type f \( \
             -name "libgtk-3.0.dylib" -o \
+            -name "libgdk-3.0.dylib" -o \
             -name "libglib-2.0.0.dylib" -o \
             -name "libgobject-2.0.0.dylib" -o \
             -name "libgmodule-2.0.0.dylib" -o \
             -name "libgio-2.0.0.dylib" -o \
             -name "libcairo.2.dylib" -o \
-            -name "libgdk-3.0.dylib" -o \
             -name "libgdk_pixbuf-2.0.0.dylib" -o \
             -name "libpango-1.0.0.dylib" -o \
             -name "libpangocairo-1.0.0.dylib" -o \
@@ -207,7 +206,8 @@ jobs:
             -name "libintl.8.dylib" \
             \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
-          # Run a secondary follow-up link pass on the newly injected framework targets directly
+          # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
+          # This MUST run before any codesigning takes place!
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
@@ -220,11 +220,18 @@ jobs:
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
 
-          # 6. Apply codesign recursively across the true compiled binaries
+          # ====================================================================
+          # CRITICAL FINAL CODESIGN: Must execute as the absolute last step
+          # ====================================================================
           echo "Executing brute-force root dist-tree recursive signing pass..."
-          find dist -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           
-          # Final Step: Deep validation seal anchoring top-level app bundle container
+          # First Pass: Sign all loose dylibs, frameworks, and plugins inside the internal folders
+          find dist/Deluge.app -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          
+          # Second Pass: Sign the main compiled binary shim specifically
+          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
+
+          # Final Step: Apply deep validation seal anchoring the top-level app bundle container with entitlements
           codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
