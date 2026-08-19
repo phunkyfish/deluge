@@ -217,29 +217,30 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # 1. Submit to Apple and capture the output log text to find the Submission ID
+          # 1. Submit the disk image utilizing clear environment variable parameter mappings
           SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait 2>&1)
+          
           echo "$SUBMISSION_OUT"
-
+          
           # Extract the unique submission ID character string cleanly
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
-
+          
           # 2. Check if the notarization transaction was rejected by Apple's servers
           if echo "$SUBMISSION_OUT" | grep -q "status: Invalid"; then
             echo "❌ Apple Notary Service rejected the binary asset package!"
             echo "Fetching Apple's comprehensive diagnostic failure logs..."
-            # Print the exact failure reasons directly into the GitHub Actions log console
+            
             xcrun notarytool log "$SUBMISSION_ID" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_PASSWORD" \
               --team-id "$TEAM_ID"
             exit 1
           fi
-
+          
           # 3. Staple the approved ticket only if the status clears successfully
           xcrun stapler staple "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
