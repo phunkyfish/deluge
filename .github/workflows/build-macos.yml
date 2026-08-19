@@ -207,11 +207,27 @@ jobs:
             \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
           # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
-          # This MUST run before any codesigning takes place!
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+
+          # ====================================================================
+          # FIX: HARDENED RUNTIME COMPLIANT IDENTITY PATH OVERWRITE
+          # ====================================================================
+          echo "Rewriting internal library identification headers for Gatekeeper compliance..."
+          FW_DIR="dist/Deluge.app/Contents/Frameworks"
+          
+          # Force each collected library to declare itself as a relocatable relative asset
+          for dylib in "$FW_DIR"/*.dylib; do
+            if [ -f "$dylib" ]; then
+              bname=$(basename "$dylib")
+              install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib"
+            fi
+          done
+
+          # Add an explicit Runpath Search Path (rpath) definition directly into the core binary header
+          install_name_tool -add_rpath "@executable_path/../Frameworks/" dist/Deluge.app/Contents/MacOS/Deluge 2>/dev/null || true
 
           # Print the folder contents to verify files remain completely intact
           echo "Verified interior framework folder elements payload metrics:"
