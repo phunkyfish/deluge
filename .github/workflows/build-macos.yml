@@ -216,8 +216,8 @@ jobs:
           # 1. Create a pristine, isolated directory for the installer payload
           mkdir -p secure_dmg_staging
           
-          # 2. Use rsync to safely copy the app bundle while preserving signatures and extended attributes
-          rsync -aHAX dist/Deluge.app secure_dmg_staging/
+          # 2. FIX: Use native 'ditto' instead of rsync to safely stage the bundle with all signatures intact
+          ditto dist/Deluge.app secure_dmg_staging/Deluge.app
           
           # 3. Generate the disk image pointing exclusively to the clean staging folder
           create-dmg \
