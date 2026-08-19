@@ -217,12 +217,16 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # 1. Execute submission inside single quotes to protect raw string inputs from shell expansion
           echo "Submitting installer package to Apple Notary Service..."
           
-          SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${TEAM_ID}" --wait 2>&1)
+          # 1. Establish the credential verification layout strings dynamically
+          # Enforcing exact parameter assignments to bypass CLI argument dropping issues
+          SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait 2>&1)
           
-          # Print the filtered result to inspect processing tracking status safely
           echo "Notary API Server Response Log:"
           echo "$SUBMISSION_OUT"
           
@@ -230,10 +234,12 @@ jobs:
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
           
           # 2. Evaluate if rejection status was thrown back by Apple validators
-          if echo "$SUBMISSION_OUT" | grep -q "status: Invalid"; then
-            echo "❌ Apple Notary Service rejected the binary asset package!"
-            echo "Extracting comprehensive diagnostics logs..."
-            xcrun notarytool log "$SUBMISSION_ID" --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${TEAM_ID}"
+          if echo "$SUBMISSION_OUT" | grep -q "status: Invalid" || [ -z "$SUBMISSION_ID" ]; then
+            echo "❌ Apple Notary Service credentials or binary validation failed!"
+            if [ ! -z "$SUBMISSION_ID" ]; then
+              echo "Extracting comprehensive diagnostics logs..."
+              xcrun notarytool log "$SUBMISSION_ID" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$TEAM_ID"
+            fi
             exit 1
           fi
           
