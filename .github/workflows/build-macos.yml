@@ -134,55 +134,42 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # FIX: Compile cffi, zope.interface, AND pygobject directly from source 
-          # using our universal CFLAGS to ensure the 'gi' module is natively available
+          # Also compile cffi and zope.interface cleanly as wheels into the same pool folder
           pip wheel --no-binary cffi,zope.interface,pygobject -w universal_wheels cffi zope.interface pygobject
 
           # 3. Download explicit universal2 wheels for the core compiled libraries
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity
-
-          # 4. FIX: Run the full tree scan pointing to our local wheel directory pool via --find-links
-          # This allows pip to satisfy the 'rencode', 'cffi', and 'zope.interface' requirements instantly
+          
+          # 4. Run the full tree scan pointing to our local wheel directory pool via --find-links
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
-
-          # Safely strip core binary duplicates out of the tree folder to prevent installation conflicts
+          
           for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface; do
             rm -f dependency_tree/${pkg}-*.whl
           done
-
-          # Merge the verified pure-python dependencies (pyxdg, mako, etc.) cleanly into the main staging area
           mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
 
           # Force install the comprehensive, conflict-free universal environment tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
-
-          # Re-apply non-dependent local application installation
           pip install . --no-deps
 
           # ====================================================================
           # NATIVE GOBJECT INTROSPECTION RUNTIME PATH HOOK
           # ====================================================================
-          # FIX: This script injects required path configurations natively within the process space
-          # before the GTK frameworks initialize, satisfying Hardened Runtime constraints.
           cat <<'EOF' > gi_runtime_hook.py
           import os
           import sys
-
           if getattr(sys, 'frozen', False):
               _base = os.path.dirname(os.path.dirname(sys.executable))
-              _fw = os.path.join(_base, 'Frameworks')
-              _res = os.path.join(_base, 'Resources')
-              _typelibs = os.path.join(_res, 'gi_typelibs')
-              
-              # Inject environmental fallbacks directly inside the process memory tree
-              os.environ['DYLD_LIBRARY_PATH'] = f"{_fw}:{_typelibs}:" + os.environ.get('DYLD_LIBRARY_PATH', '')
-              os.environ['DYLD_FRAMEWORK_PATH'] = f"{_fw}:" + os.environ.get('DYLD_FRAMEWORK_PATH', '')
-              os.environ['GI_TYPELIB_PATH'] = f"{_fw}:{_typelibs}"
+              os.environ['GI_TYPELIB_PATH'] = os.path.join(_base, 'Resources', 'gi_typelibs')
           EOF
 
-          # 5. Compile application forcing path mapping to ensure universal assets are utilized
+          # 5. Compile application forcing environment variables to resolve PyInstaller's GI internal hook checks
+          # FIX: Export paths directly to the pyinstaller invocation process environmental context
+          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
+          export GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0:/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
+          
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=gi_runtime_hook.py \
@@ -192,15 +179,19 @@ jobs:
             /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
 
           # ====================================================================
-          # NATIVE ARCHITECTURE FRAMEWORK INJECTION (Force 30MB+ Collection)
+          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
           # ====================================================================
-          echo "Force-collecting missing Homebrew shared framework libraries natively..."
+          echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
-
-          # Explicitly extract files using concrete local paths to bypass any Rosetta emulation redirects
-          # We search both /opt/homebrew (Apple Silicon) and /usr/local (Intel fallback) explicitly
-          BREW_LIBS="/opt/homebrew/lib /opt/homebrew/Cellar /usr/local/lib /usr/local/Cellar"
           
+          # FIX STEP A: Run dylibbundler FIRST to clear its directory cleansing phase safely
+          dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
+            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
+            -p @executable_path/../Frameworks/ \
+            -d dist/Deluge.app/Contents/Frameworks/
+
+          # FIX STEP B: Inject the heavy framework binary dependencies SECOND so they cannot be deleted
+          BREW_LIBS="/opt/homebrew/lib /opt/homebrew/Cellar /usr/local/lib /usr/local/Cellar"
           find $BREW_LIBS -type f \( \
             -name "libgtk-3.0.dylib" -o \
             -name "libglib-2.0.0.dylib" -o \
@@ -216,26 +207,15 @@ jobs:
             -name "libintl.8.dylib" \
             \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
-          # Print the folder contents to the console so we can verify the files are physically copied
-          echo "Current contents of Frameworks sandbox directory:"
-          ls -lh dist/Deluge.app/Contents/Frameworks/
-
-          # ====================================================================
-          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
-          # ====================================================================
-          echo "Executing native shared library consolidation passes..."
-          
-          # Fix the primary executable binary link to point to our framework repository
-          dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
-            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
-            -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/Frameworks/
-
-          # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
+          # Run a secondary follow-up link pass on the newly injected framework targets directly
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+
+          # Print the folder contents to verify files remain completely intact
+          echo "Verified interior framework folder elements payload metrics:"
+          ls -lh dist/Deluge.app/Contents/Frameworks/
 
           # Ensure the runner keychain does not auto-lock during rapid loops
           security set-keychain-settings -lut 7200 build.keychain
