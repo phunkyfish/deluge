@@ -105,17 +105,17 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # 2. RESOLVED FIX: Added --no-deps to prevent pip from choking on cffi constraints during downstream mapping
+          # 2. DOWNLOAD GENUINE UNIVERSAL2 / PURE-PYTHON BINARIES EXCLUSIVELY WITHOUT DEPS
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity mako
 
-          # 3. Build local source extensions missing a universal wheel on PyPI
+          # 3. COMPLIANT LOCAL SOURCE COMPILATIONS (Emits native universal2 dual-slices)
           pip wheel --no-binary cffi,pygobject,markupsafe -w universal_wheels cffi pygobject markupsafe
 
           # 4. Gather the rest of your app dependencies
           pip wheel --find-links=universal_wheels -w universal_wheels .
           
-          # 4. RESOLVE CONFLICTING DUPLICATES
+          # 5. RESOLVE DUPLICATE OVERLAPS
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
           
@@ -123,6 +123,11 @@ jobs:
             rm -f dependency_tree/${pkg}-*.whl 2>/dev/null || true
           done
           mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
+          
+          # CRITICAL FIXED POSITION: Purge any single-architecture thin wheels out of the staging pool.
+          # This leaves your custom universal2 wheels untouched, forcing pip to select them.
+          rm -f universal_wheels/*_arm64.whl
+          rm -f universal_wheels/*_x86_64.whl
           
           # Force clean universal stack synchronization installation
           pip install --force-reinstall --no-deps universal_wheels/*.whl
