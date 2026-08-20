@@ -164,6 +164,7 @@ jobs:
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
+            -i "deluge/ui/data/pixmaps/deluge.ico" \
             --collect-all gi \
             --collect-all deluge \
             --hidden-import=libtorrent \
