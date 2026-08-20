@@ -105,14 +105,12 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # 2. CURE: Force ALL packages in the tree to compile from source via --no-binary :all:
-          # This forces markupsafe, pygobject, cffi, mako, and all future additions to safely build 
-          # local universal2 binary slices inside our workflow environment.
-          pip wheel --no-binary :all: -w universal_wheels .
+          # 2. RESOLVED FIX: Pull down explicit universal2 dependencies first to shield the environment from building Rust packages
+          pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels \
+            cryptography twisted setproctitle pyopenssl service-identity cffi zope.interface pygobject markupsafe mako
 
-          # 3. DOWNLOAD SPECIFIC EXCEPTIONS: Only download pre-compiled packages known to publish reliable universal2 layouts
-          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity
+          # 3. Compile remaining pure-python or simple C extensions from source without touching cryptography
+          pip wheel --find-links=universal_wheels -w universal_wheels .
           
           # 4. RESOLVE CONFLICTING DUPLICATES
           mkdir -p dependency_tree
