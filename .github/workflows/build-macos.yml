@@ -35,7 +35,7 @@ jobs:
           HOMEBREW_NO_ANALYTICS: 1
         run: |
           # Install packaging tools. We will isolate GTK dependencies from Python pip packages or direct builds to guarantee universal2 architecture slices.
-          brew install --formula dylibbundler create-dmg
+          brew install --formula dylibbundler create-dmg libtorrent-rasterbar
 
       - name: Import Apple Developer Certificate
         env:
@@ -106,7 +106,7 @@ jobs:
           cd ..
 
           # 3. Target universal dynamic binary dependencies via Pip compilation
-          pip wheel --no-binary cffi,zope.interface,pygobject,libtorrent -w universal_wheels cffi zope.interface pygobject libtorrent
+          pip wheel --no-binary cffi,zope.interface,pygobject -w universal_wheels cffi zope.interface pygobject
           
           # 4. Pull down core upstream universal binary packages
           pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels cryptography twisted setproctitle pyopenssl service-identity
@@ -114,6 +114,7 @@ jobs:
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
           
+          # FIX STEP 2: Included libtorrent in synchronization sanitization tracking array
           for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface libtorrent pygobject; do
             rm -f dependency_tree/${pkg}-*.whl
           done
@@ -121,6 +122,11 @@ jobs:
 
           pip install --force-reinstall --no-deps universal_wheels/*.whl
           pip install . --no-deps
+
+          # FIX STEP 3: Harvest Homebrew-compiled libtorrent bindings and inject directly into site-packages
+          BREW_PREFIX=$(brew --prefix)
+          echo "Extracting local bindings out of Homebrew framework trees..."
+          cp -r $BREW_PREFIX/lib/python3.11/site-packages/libtorrent* $(python -c "import site; print(site.getsitepackages()[0])") 2>/dev/null || true
 
           # Generate localized runtime environment initialization hooks
           cat <<'EOF' > gi_runtime_hook.py
