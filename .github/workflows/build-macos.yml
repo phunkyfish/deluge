@@ -69,7 +69,7 @@ jobs:
 
       - name: Compile and Package App
         run: |
-          python -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller pillow
+          python -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -159,12 +159,48 @@ jobs:
           SYS_SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
 
           # ====================================================================
-          # NATIVE COMPILATION PIPELINE
+          # DYNAMIC APPLE ICNS ICON SYNTHESIS PASS
           # ====================================================================
+          echo "Synthesizing Apple-compliant .icns file out of source image pools..."
+          mkdir -p icon.iconset
+
+          # Extract the maximum resolution raw PNG icon from the installed deluge assets
+          SOURCE_PNG="$SYS_SITEPACKAGES/deluge/ui/data/pixmaps/deluge.png"
+          if [ ! -f "$SOURCE_PNG" ]; then
+            # Alternate fallback location string mapping
+            SOURCE_PNG=$(find $SYS_SITEPACKAGES -name "deluge.png" | head -n 1)
+          fi
+
+          if [ -f "$SOURCE_PNG" ]; then
+            echo "Found root master PNG layout at: $SOURCE_PNG"
+            # 1. Programmatically scale and map standard multi-dimensional icon matrices via sips
+            sips -z 16 16     "$SOURCE_PNG" --out icon.iconset/icon_16x16.png
+            sips -z 32 32     "$SOURCE_PNG" --out icon.iconset/icon_16x16@2x.png
+            sips -z 32 32     "$SOURCE_PNG" --out icon.iconset/icon_32x32.png
+            sips -z 64 64     "$SOURCE_PNG" --out icon.iconset/icon_32x32@2x.png
+            sips -z 128 128   "$SOURCE_PNG" --out icon.iconset/icon_128x128.png
+            sips -z 256 256   "$SOURCE_PNG" --out icon.iconset/icon_128x128@2x.png
+            sips -z 256 256   "$SOURCE_PNG" --out icon.iconset/icon_256x256.png
+            sips -z 512 512   "$SOURCE_PNG" --out icon.iconset/icon_256x256@2x.png
+            sips -z 512 512   "$SOURCE_PNG" --out icon.iconset/icon_512x512.png
+            sips -z 1024 1024 "$SOURCE_PNG" --out icon.iconset/icon_512x512@2x.png
+
+            # 2. Compile the mapped folder directory straight into an authentic Apple Icon file
+            iconutil -c icns icon.iconset -o generated_deluge.icns
+            echo "Successfully generated local universal app icon payload file!"
+          else
+            echo "::warning::Could not find deluge.png inside site-packages! Defaulting to generic layout..."
+            touch generated_deluge.icns
+          fi
+
+          # ====================================================================
+          # STREAMLINED MULTI-ARCH COMPILATION PIPELINE
+          # ====================================================================
+          # Pass the newly synthesized icon directly via the -i parameter
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
-            -i "$SYS_SITEPACKAGES/deluge/ui/data/pixmaps/deluge.icns" \
+            -i "generated_deluge.icns" \
             --collect-all gi \
             --collect-all deluge \
             --hidden-import=libtorrent \
