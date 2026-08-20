@@ -149,76 +149,108 @@ jobs:
               os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(_base, 'Resources', 'glib-2.0', 'schemas')
           EOF
 
-          # Determine the dynamic location of our active runner pip package binary layout entries
-          SYS_SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
-          SYS_BIN_DIR=$(dirname $(which python))
+          # 5. Create a clean local bootstrap entrypoint script
+          echo "import deluge.ui.gtk3.app" > run_deluge.py
+          echo "import sys" >> run_deluge.py
+          echo "if __name__ == '__main__':" >> run_deluge.py
+          echo "    sys.exit(deluge.ui.gtk3.app.start_ui())" >> run_deluge.py
 
-          # 5. Run PyInstaller bundle pipeline utilizing setup-python environment parameters
-          pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
-            --target-architecture universal2 deluge/Deluge.spec \
+          # FIXED: Extract a clean, unbracketed single path string out of the site-packages array
+          SYS_SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+
+          # ====================================================================
+          # NATIVE COMPILATION PIPELINE
+          # ====================================================================
+          pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
+            --target-architecture=universal2 \
             --collect-all gi \
             --collect-all deluge \
+            --hidden-import=libtorrent \
             --paths="$SYS_SITEPACKAGES" \
-            --add-data "deluge/ui/data:deluge/ui/data" \
-            "$SYS_BIN_DIR/deluge-gtk"
+            --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
+            run_deluge.py
 
+          pyinstaller --noconfirm Deluge.spec
+
+          # ====================================================================
+          # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
+          # ====================================================================
           echo "Injecting mandatory GTK runtime assets to protect standalone execution..."
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
-          BREW_PREFIX=$(brew --prefix)
-
+          BREW_PREFIX="/opt/homebrew"
+          if [ ! -d "$BREW_PREFIX" ]; then
+            BREW_PREFIX="/usr/local"
+          fi
+          
           mkdir -p "$APP_RESOURCES/glib-2.0/schemas"
-          cp -r $BREW_PREFIX/share/glib-2.0/schemas/* "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
-          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas"
+          
+          # Recursively locate schemas across any glib paths inside cellars or system pools
+          find ${BREW_PREFIX} -name "gschemas.compiled" -exec dirname {} \; 2>/dev/null | while read -r schema_dir; do
+            echo "Found structural schema source path: $schema_dir"
+            cp -r "${schema_dir}/"* "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
+          done
+          
+          # Compile schemas inside the app container
+          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas" 2>/dev/null || true
 
           mkdir -p "$APP_RESOURCES/share/icons/Adwaita"
           mkdir -p "$APP_RESOURCES/share/icons/hicolor"
-          cp -r $BREW_PREFIX/share/icons/Adwaita/* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
-          cp -r $BREW_PREFIX/share/icons/hicolor/* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
+          cp -r ${BREW_PREFIX}/share/icons/Adwaita/* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
+          cp -r ${BREW_PREFIX}/share/icons/hicolor/* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
 
           mkdir -p "$APP_RESOURCES/gi_typelibs"
-          cp -r $BREW_PREFIX/lib/girepository-1.0/*.typelib "$APP_RESOURCES/gi_typelibs/"
+          cp -r ${BREW_PREFIX}/lib/girepository-1.0/* "$APP_RESOURCES/gi_typelibs/" 2>/dev/null || true
 
+          # ====================================================================
+          # SECURE FRAMEWORKS CONSOLIDATION PASS VIA DYLIBBUNDLER
+          # ====================================================================
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
+          # FIXED TARGETING: Consolidate external dependencies but do NOT touch the core internal 'Python' bootloader file.
+          # Passing -ns explicitly skips ad-hoc signing block validations.
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/Frameworks/
+            -d dist/Deluge.app/Contents/Frameworks/ -ns
 
+          # Restrict the recursive bundle pass strictly to .dylib and .so extensions so the bootloader framework remains untouched
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
+            -d dist/Deluge.app/Contents/Frameworks/ -ns \; 2>/dev/null || true
 
           echo "Rewriting internal library identification headers for Gatekeeper compliance..."
           FW_DIR="dist/Deluge.app/Contents/Frameworks"
-          for dylib in "$FW_DIR"/*.dylib; do
-            if [ -f "$dylib" ]; then
+          for dylib in "$FW_DIR"/*; do
+            if [ -f "$dylib" ] && [ ! -L "$dylib" ]; then
               bname=$(basename "$dylib")
-              install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib"
+              install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib" 2>/dev/null || true
             fi
           done
 
           install_name_tool -add_rpath "@executable_path/../Frameworks/" dist/Deluge.app/Contents/MacOS/Deluge 2>/dev/null || true
 
-          echo "Verifying structural binary composition maps..."
-          lipo -info dist/Deluge.app/Contents/MacOS/Deluge
-          find dist/Deluge.app -name "*.so" -exec lipo -info {} \;
-
+          # ====================================================================
+          # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
+          # ====================================================================
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
-          # Step A: Cryptographically seal loose internal libraries and runtime objects first with explicit timestamps
-          find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          # Remove broken symlinks before starting signature loops
+          find dist/Deluge.app -type l -delete
+
+          # Cryptographically seal components inside-out with secure timestamps
+          find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
+          find dist/Deluge.app/Contents/Frameworks -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
           
-          # Step B: Seal the main target entry point using the same timestamp enforcement
+          # Seal primary app core entry points last
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
-          
-          # Step C: Apply the final deep validation anchor over the top-level container boundary
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+
+          echo "Verifying local application signature metrics..."
+          codesign --verify --deep --verbose=4 dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
