@@ -105,14 +105,11 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # 2. DOWNLOAD GENUINE UNIVERSAL2 / PURE-PYTHON BINARIES:
-          # This pulls down the prebuilt fat wheels or universal pure-python files (like mako) safely.
-          pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels \
+          # 2. RESOLVED FIX: Added --no-deps to prevent pip from choking on cffi constraints during downstream mapping
+          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
             cryptography twisted setproctitle pyopenssl service-identity mako
 
-          # 3. COMPLIANT LOCAL SOURCE COMPILATIONS:
-          # Only build the specific extensions that lack universal2 wheels on PyPI.
-          # This forces markupsafe, cffi, and pygobject to compile their binary extensions into real universal2 dual-slices.
+          # 3. Build local source extensions missing a universal wheel on PyPI
           pip wheel --no-binary cffi,pygobject,markupsafe -w universal_wheels cffi pygobject markupsafe
 
           # 4. Gather the rest of your app dependencies
