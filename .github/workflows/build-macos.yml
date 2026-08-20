@@ -209,15 +209,24 @@ jobs:
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # FIXED TARGETING: Consolidate external dependencies but do NOT touch the core internal 'Python' bootloader file.
-          # Passing -ns explicitly skips ad-hoc signing block validations.
+          # FIXED INJECTION: Manually harvest the true universal2 Python core library 
+          # from the GitHub runner environment and inject it straight into the app container.
+          SYS_PYTHON_CORE="/Library/Frameworks/Python.framework/Versions/3.11/Python"
+          if [ -f "$SYS_PYTHON_CORE" ]; then
+            cp -f "$SYS_PYTHON_CORE" dist/Deluge.app/Contents/Frameworks/Python
+          else
+            # Dynamic fallback alignment patch if the runner shifts internal frameworks locations
+            cp -f "${pythonLocation}/Python" dist/Deluge.app/Contents/Frameworks/Python 2>/dev/null || true
+          fi
+
+          # Consolidate external dependencies, skipping ad-hoc codesigning (-ns)
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ -ns
 
-          # Restrict the recursive bundle pass strictly to .dylib and .so extensions so the bootloader framework remains untouched
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
+          # Include the injected Python binary file core inside our dylibbundler path pass array
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Python" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ -ns \; 2>/dev/null || true
