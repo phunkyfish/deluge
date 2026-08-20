@@ -155,7 +155,7 @@ jobs:
 
           # 5. Run PyInstaller bundle pipeline utilizing setup-python environment parameters
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
-            --target-architecture universal2 \
+            --target-architecture universal2 deluge/Deluge.spec \
             --runtime-hook=gi_runtime_hook.py \
             --collect-all gi \
             --collect-all deluge \
@@ -210,9 +210,14 @@ jobs:
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
+          # Step A: Cryptographically seal loose internal libraries and runtime objects first with explicit timestamps
           find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          
+          # Step B: Seal the main target entry point using the same timestamp enforcement
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
+          
+          # Step C: Apply the final deep validation anchor over the top-level container boundary
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
