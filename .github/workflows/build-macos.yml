@@ -29,25 +29,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install System Dependencies
+      - name: Install System Packaging Tools
         env:
           HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
           HOMEBREW_NO_ANALYTICS: 1
         run: |
-          # 1. Configure the explicit multi-architecture compilation flags for Homebrew's internal build systems
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          export CFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
-          export CXXFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O3"
-          export LDFLAGS="-arch arm64 -arch x86_64 -mmacosx-version-min=11.0"
-          
-          echo "Compiling system frameworks as true universal2 fat binary structures..."
-          
-          # 2. Force install dylibbundler and create-dmg cleanly
-          brew install --formula dylibbundler create-dmg libtorrent-rasterbar
-          
-          # 3. FIX: Force Homebrew to compile the core GTK dependencies directly from source 
-          # using our universal CFLAGS, ensuring both arm64 and x86_64 architecture slices exist.
-          brew install --formula --build-from-source glib cairo pango gdk-pixbuf gobject-introspection gtk+3 adwaita-icon-theme
+          # Install packaging tools. We will isolate GTK dependencies from Python pip packages or direct builds to guarantee universal2 architecture slices.
+          brew install --formula dylibbundler create-dmg
 
       - name: Import Apple Developer Certificate
         env:
@@ -55,7 +43,6 @@ jobs:
           P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           KEYCHAIN_PASSWORD: "temporary_actions_password"
         run: |
-          # Create a temporary keychain to hold the certificate securely
           echo $BUILD_CERTIFICATE_BASE64 | base64 --decode --output certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -82,8 +69,7 @@ jobs:
 
       - name: Compile and Package App
         run: |
-          # Setup baseline packaging systems in a single call
-          pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
+          python -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -93,33 +79,18 @@ jobs:
             APP_VERSION="2.2.0"
           fi
           echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
-
-          # Apply the dynamic patch immediately so setup.py can always evaluate the version number
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
-
-          # Create a localized staging folder to hold our custom universal wheels
           mkdir -p universal_wheels
 
-          # 2. FIX: Build rencode from the upstream commit that drops -march=native / SSE flags,
-          # which otherwise block a universal2 compile. See github.com/aresch/rencode commit e7ec8ea7.
+          # 2. Build explicit universal2 rencode package safely
           git clone --quiet https://github.com/aresch/rencode.git
           cd rencode
           git checkout --quiet e7ec8ea718e73a8fee7dbc007c262e1584f7f94b
-
-          # Tag the version so it's traceable as a patched build, then read it straight
-          # from pyproject.toml rather than inferring it from a filename later on.
           sed -i '' -E 's/^(version = ")([^"]+)(")/\1\2+universal2fix\3/' pyproject.toml
           RENCODE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['tool']['poetry']['version'])")
-          echo "Building rencode version: $RENCODE_VERSION"
           pip install --quiet cython
-          echo "Cython version: $(cython --version 2>&1)"
-          ls -la rencode/
           cython -3 rencode/_rencode.pyx
-          ls -la rencode/_rencode.c || { echo "::error::Cython did not produce _rencode.c"; exit 1; }
 
-          # Bypass Poetry's build path entirely: poetry-core cannot tag/produce universal2
-          # wheels (see python-poetry/poetry#7107), so build directly against the
-          # pre-generated C source with a plain setuptools Extension instead.
           rm -f build.py pyproject.toml poetry.lock
           cat <<EOF > setup.py
           from setuptools import setup, Extension
@@ -134,91 +105,79 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # Also compile cffi and zope.interface cleanly as wheels into the same pool folder
-          pip wheel --no-binary cffi,zope.interface,pygobject -w universal_wheels cffi zope.interface pygobject
-
-          # 3. Download explicit universal2 wheels for the core compiled libraries
-          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity
+          # 3. Target universal dynamic binary dependencies via Pip compilation
+          pip wheel --no-binary cffi,zope.interface,pygobject,libtorrent -w universal_wheels cffi zope.interface pygobject libtorrent
           
-          # 4. Run the full tree scan pointing to our local wheel directory pool via --find-links
+          # 4. Pull down core upstream universal binary packages
+          pip download --platform macosx_11_0_universal2 --only-binary=:all: --no-deps -d universal_wheels cryptography twisted setproctitle pyopenssl service-identity
+          
           mkdir -p dependency_tree
           pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
           
-          for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface; do
+          for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface libtorrent pygobject; do
             rm -f dependency_tree/${pkg}-*.whl
           done
           mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
 
-          # Force install the comprehensive, conflict-free universal environment tree
           pip install --force-reinstall --no-deps universal_wheels/*.whl
           pip install . --no-deps
 
-          # ====================================================================
-          # NATIVE GOBJECT INTROSPECTION RUNTIME PATH HOOK
-          # ====================================================================
+          # Generate localized runtime environment initialization hooks
           cat <<'EOF' > gi_runtime_hook.py
           import os
           import sys
           if getattr(sys, 'frozen', False):
               _base = os.path.dirname(os.path.dirname(sys.executable))
               os.environ['GI_TYPELIB_PATH'] = os.path.join(_base, 'Resources', 'gi_typelibs')
+              os.environ['XDG_DATA_DIRS'] = os.path.join(_base, 'Resources', 'share')
+              os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(_base, 'Resources', 'glib-2.0', 'schemas')
           EOF
 
-          # 5. Compile application forcing environment variables to resolve PyInstaller's GI internal hook checks
-          export DYLD_LIBRARY_PATH="/opt/homebrew/lib:/usr/local/lib:$DYLD_LIBRARY_PATH"
-          export GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0:/usr/local/lib/girepository-1.0:$GI_TYPELIB_PATH"
-          
+          # Determine the dynamic location of our active runner pip package binary layout entries
+          SYS_SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+          SYS_BIN_DIR=$(dirname $(which python))
+
+          # 5. Run PyInstaller bundle pipeline utilizing setup-python environment parameters
           pyinstaller --noconfirm --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
             --runtime-hook=gi_runtime_hook.py \
             --collect-all gi \
-            --paths=/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages \
+            --collect-all deluge \
+            --paths="$SYS_SITEPACKAGES" \
             --add-data "deluge/ui/data:deluge/ui/data" \
-            /Library/Frameworks/Python.framework/Versions/3.11/bin/deluge-gtk
+            "$SYS_BIN_DIR/deluge-gtk"
 
-          # ====================================================================
-          # SECURE BINARY LINK RE-MAPPING VIA DYLIBBUNDLER WITH HOMEBREW PATHS
-          # ====================================================================
+          echo "Injecting mandatory GTK runtime assets to protect standalone execution..."
+          APP_RESOURCES="dist/Deluge.app/Contents/Resources"
+          BREW_PREFIX=$(brew --prefix)
+
+          mkdir -p "$APP_RESOURCES/glib-2.0/schemas"
+          cp -r $BREW_PREFIX/share/glib-2.0/schemas/* "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
+          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas"
+
+          mkdir -p "$APP_RESOURCES/share/icons/Adwaita"
+          mkdir -p "$APP_RESOURCES/share/icons/hicolor"
+          cp -r $BREW_PREFIX/share/icons/Adwaita/* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
+          cp -r $BREW_PREFIX/share/icons/hicolor/* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
+
+          mkdir -p "$APP_RESOURCES/gi_typelibs"
+          cp -r $BREW_PREFIX/lib/girepository-1.0/*.typelib "$APP_RESOURCES/gi_typelibs/"
+
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # Fix the primary executable binary link path parameters
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
-            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
+            -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/
 
-          # Inject the heavy framework binary dependencies so they are bundled safely
-          BREW_LIBS="/opt/homebrew/lib /opt/homebrew/Cellar /usr/local/lib /usr/local/Cellar"
-          find $BREW_LIBS -type f \( \
-            -name "libgtk-3.0.dylib" -o \
-            -name "libgdk-3.0.dylib" -o \
-            -name "libglib-2.0.0.dylib" -o \
-            -name "libgobject-2.0.0.dylib" -o \
-            -name "libgmodule-2.0.0.dylib" -o \
-            -name "libgio-2.0.0.dylib" -o \
-            -name "libcairo.2.dylib" -o \
-            -name "libgdk_pixbuf-2.0.0.dylib" -o \
-            -name "libpango-1.0.0.dylib" -o \
-            -name "libpangocairo-1.0.0.dylib" -o \
-            -name "libharfbuzz.0.dylib" -o \
-            -name "libintl.8.dylib" \
-            \) -exec cp -f {} dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
-
-          # Exhaustively loop over every single .so and .dylib extension inside the app layout to fix dynamic dependencies
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
-            -s /opt/homebrew/lib -s /opt/homebrew/Cellar -s /usr/local/lib -s /usr/local/Cellar \
+            -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ \; 2>/dev/null || true
 
-          # ====================================================================
-          # FIX: HARDENED RUNTIME COMPLIANT IDENTITY PATH OVERWRITE
-          # ====================================================================
           echo "Rewriting internal library identification headers for Gatekeeper compliance..."
           FW_DIR="dist/Deluge.app/Contents/Frameworks"
-          
-          # Force each collected library to declare itself as a relocatable relative asset
           for dylib in "$FW_DIR"/*.dylib; do
             if [ -f "$dylib" ]; then
               bname=$(basename "$dylib")
@@ -226,29 +185,19 @@ jobs:
             fi
           done
 
-          # Add an explicit Runpath Search Path (rpath) definition directly into the core binary header
           install_name_tool -add_rpath "@executable_path/../Frameworks/" dist/Deluge.app/Contents/MacOS/Deluge 2>/dev/null || true
 
-          # Print the folder contents to verify files remain completely intact
-          echo "Verified interior framework folder elements payload metrics:"
-          ls -lh dist/Deluge.app/Contents/Frameworks/
+          echo "Verifying structural binary composition maps..."
+          lipo -info dist/Deluge.app/Contents/MacOS/Deluge
+          find dist/Deluge.app -name "*.so" -exec lipo -info {} \;
 
-          # Ensure the runner keychain does not auto-lock during rapid loops
+          echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
-          # ====================================================================
-          # CRITICAL FINAL CODESIGN: Must execute as the absolute last step
-          # ====================================================================
-          echo "Executing brute-force root dist-tree recursive signing pass..."
-          
-          # First Pass: Sign all loose dylibs, frameworks, and plugins inside the internal folders
-          find dist/Deluge.app -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-          
-          # Second Pass: Sign the main compiled binary shim specifically
+          find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
+          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
-
-          # Final Step: Apply deep validation seal anchoring the top-level app bundle container with entitlements
-          codesign --force --options runtime --deep --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
       - name: Build Outer DMG Installer
         run: |
@@ -318,3 +267,11 @@ jobs:
         with:
           name: Deluge-macOS-Universal
           path: Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg
+
+      - name: Verify Architecture Slices
+        run: |
+          echo "Checking application main binary binary structure..."
+          lipo -info dist/Deluge.app/Contents/MacOS/Deluge
+          
+          echo "Checking native compiled Python extensions..."
+          find dist/Deluge.app -name "*.so" -exec lipo -info {} \;
