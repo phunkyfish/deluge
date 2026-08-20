@@ -105,11 +105,15 @@ jobs:
           mv dist/*.whl ../universal_wheels/
           cd ..
 
-          # 2. RESOLVED FIX: Pull down explicit universal2 dependencies first to shield the environment from building Rust packages
+          # 2. DOWNLOAD PREBUILT: Only fetch things that GUARANTEE pre-built universal2 wheels on PyPI
           pip download --platform macosx_11_0_universal2 --only-binary=:all: -d universal_wheels \
-            cryptography twisted setproctitle pyopenssl service-identity cffi zope.interface pygobject markupsafe mako
+            cryptography twisted setproctitle pyopenssl service-identity
 
-          # 3. Compile remaining pure-python or simple C extensions from source without touching cryptography
+          # 3. BUILD FROM SOURCE: Force C-extensions lacking pre-compiled universal2 packages on PyPI to build locally 
+          # (This compiles cffi, pygobject, markupsafe, and mako safely as fat binaries using global CFLAGS)
+          pip wheel --no-binary cffi,pygobject,markupsafe,mako -w universal_wheels cffi pygobject markupsafe mako
+
+          # 4. Compile remaining simple pure-python requirements from source
           pip wheel --find-links=universal_wheels -w universal_wheels .
           
           # 4. RESOLVE CONFLICTING DUPLICATES
