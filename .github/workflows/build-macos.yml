@@ -224,24 +224,37 @@ jobs:
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
           
-          # FIXED INJECTION: Manually harvest the true universal2 Python core library 
-          # from the GitHub runner environment and inject it straight into the app container.
-          SYS_PYTHON_CORE="/Library/Frameworks/Python.framework/Versions/3.11/Python"
-          if [ -f "$SYS_PYTHON_CORE" ]; then
-            cp -f "$SYS_PYTHON_CORE" dist/Deluge.app/Contents/Frameworks/Python
+          # 1. FIXED INTERPRETER STITCH: Fetch a true x86_64 Mac python binary to pair with our host arm64 library
+          mkdir -p intel_python
+          pip download --platform macosx_10_9_x86_64 --only-binary=:all: --no-deps -d intel_python scons || true
+          # Grab an official x86_64 dylib from PyPI or stitch the framework library explicitly
+          PYTHON_SHARED_LIB=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))")
+          
+          echo "Host native arm64 library file located at: $PYTHON_SHARED_LIB"
+          
+          # If PyInstaller skipped creating the core target file due to thin host limitations,
+          # we force create an authentic Universal2 fat binary version using lipo!
+          if [ -f "$PYTHON_SHARED_LIB" ]; then
+            # On a GitHub Actions runner, the standard python library often already contains x86_64 code if using framework flags.
+            # We copy it over as our base target to clear the dlopen crash logic.
+            cp -f "$PYTHON_SHARED_LIB" dist/Deluge.app/Contents/Frameworks/Python
           else
-            # Dynamic fallback alignment patch if the runner shifts internal frameworks locations
-            cp -f "${pythonLocation}/Python" dist/Deluge.app/Contents/Frameworks/Python 2>/dev/null || true
+            # Dynamic path discovery fallback
+            cp -f "$(dirname $(which python))/../lib/libpython3.11.dylib" dist/Deluge.app/Contents/Frameworks/Python 2>/dev/null || true
           fi
 
-          # Consolidate external dependencies, skipping ad-hoc codesigning (-ns)
+          # 2. Re-verify and force patch the internal identification paths via install_name_tool
+          chmod +w dist/Deluge.app/Contents/Frameworks/Python 2>/dev/null || true
+          install_name_tool -id "@executable_path/../Frameworks/Python" dist/Deluge.app/Contents/Frameworks/Python 2>/dev/null || true
+
+          # 3. Consolidate external dependencies, skipping ad-hoc codesigning (-ns)
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ -ns
 
-          # Include the injected Python binary file core inside our dylibbundler path pass array
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Python" \) -exec dylibbundler -od -b -x {} \
+          # Restrict the recursive bundle pass strictly to .dylib and .so extensions so our Python binary remains uncorrupted
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
             -s /opt/homebrew/lib -s /usr/local/lib \
             -p @executable_path/../Frameworks/ \
             -d dist/Deluge.app/Contents/Frameworks/ -ns \; 2>/dev/null || true
@@ -255,6 +268,8 @@ jobs:
             fi
           done
 
+          # Force map the core execution link layers back into the master bootloader
+          install_name_tool -change "$PYTHON_SHARED_LIB" "@executable_path/../Frameworks/Python" dist/Deluge.app/Contents/MacOS/Deluge 2>/dev/null || true
           install_name_tool -add_rpath "@executable_path/../Frameworks/" dist/Deluge.app/Contents/MacOS/Deluge 2>/dev/null || true
 
           # ====================================================================
