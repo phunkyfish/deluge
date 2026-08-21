@@ -159,48 +159,15 @@ jobs:
           SYS_SITEPACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
 
           # ====================================================================
-          # DYNAMIC APPLE ICNS ICON SYNTHESIS PASS
+          # NATIVE COMPILATION PIPELINE
           # ====================================================================
-          echo "Synthesizing Apple-compliant .icns file out of source image pools..."
-          mkdir -p icon.iconset
-
-          # Extract the maximum resolution raw PNG icon from the installed deluge assets
-          SOURCE_PNG="$SYS_SITEPACKAGES/deluge/ui/data/pixmaps/deluge.png"
-          if [ ! -f "$SOURCE_PNG" ]; then
-            # Alternate fallback location string mapping
-            SOURCE_PNG=$(find $SYS_SITEPACKAGES -name "deluge.png" | head -n 1)
-          fi
-
-          if [ -f "$SOURCE_PNG" ]; then
-            echo "Found root master PNG layout at: $SOURCE_PNG"
-            # 1. Programmatically scale and map standard multi-dimensional icon matrices via sips
-            sips -z 16 16     "$SOURCE_PNG" --out icon.iconset/icon_16x16.png
-            sips -z 32 32     "$SOURCE_PNG" --out icon.iconset/icon_16x16@2x.png
-            sips -z 32 32     "$SOURCE_PNG" --out icon.iconset/icon_32x32.png
-            sips -z 64 64     "$SOURCE_PNG" --out icon.iconset/icon_32x32@2x.png
-            sips -z 128 128   "$SOURCE_PNG" --out icon.iconset/icon_128x128.png
-            sips -z 256 256   "$SOURCE_PNG" --out icon.iconset/icon_128x128@2x.png
-            sips -z 256 256   "$SOURCE_PNG" --out icon.iconset/icon_256x256.png
-            sips -z 512 512   "$SOURCE_PNG" --out icon.iconset/icon_256x256@2x.png
-            sips -z 512 512   "$SOURCE_PNG" --out icon.iconset/icon_512x512.png
-            sips -z 1024 1024 "$SOURCE_PNG" --out icon.iconset/icon_512x512@2x.png
-
-            # 2. Compile the mapped folder directory straight into an authentic Apple Icon file
-            iconutil -c icns icon.iconset -o generated_deluge.icns
-            echo "Successfully generated local universal app icon payload file!"
-          else
-            echo "::warning::Could not find deluge.png inside site-packages! Defaulting to generic layout..."
-            touch generated_deluge.icns
-          fi
-
-          # ====================================================================
-          # STREAMLINED MULTI-ARCH COMPILATION PIPELINE
-          # ====================================================================
-          # Pass the newly synthesized icon directly via the -i parameter
+          # 1. Generate the baseline spec without architecture flags on the CLI
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
-            -i "generated_deluge.icns" \
+            -i "deluge/ui/data/pixmaps/deluge.icns" \
+            --exclude-module=PIL \
+            --exclude-module=Pillow \
             --collect-all gi \
             --collect-all deluge \
             --hidden-import=libtorrent \
@@ -208,6 +175,18 @@ jobs:
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             run_deluge.py
 
+          # 2. Extract the dynamic python library path from the environment runner setup
+          PYTHON_LIB_FILE=$(python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))")
+          echo "Discovered environment Python framework runtime binary core at: $PYTHON_LIB_FILE"
+
+          # 3. PROGRAMMATIC SPEC PATCH: Inject a direct python_attr core override array 
+          # straight into the spec file's initialization block. This forces PyInstaller to 
+          # cleanly bundle the real Python runtime engine file inside 'Contents/Frameworks/Python' 
+          # matching the bootloader's expectations natively!
+          sed -i '' "s|exe = EXE(|import os\nexe = EXE(|g" Deluge.spec
+          sed -i '' "s|console=False,|console=False,\n        python_attr=(\n            '${PYTHON_LIB_FILE}',\n            'Python',\n            'Python'\n        ),|g" Deluge.spec
+
+          # 4. Compile targeting the patched spec file directly
           pyinstaller --noconfirm Deluge.spec
 
           # ====================================================================
