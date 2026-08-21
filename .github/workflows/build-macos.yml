@@ -272,11 +272,16 @@ jobs:
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
+          # Remove broken symlinks before starting signature loops
           find dist/Deluge.app -type l -delete
 
+          # FIXED COMPLIANCE SWEEP: Strictly target binary objects (*.so and *.dylib) 
+          # inside Resources and Frameworks. This cuts out the text file bloat, 
+          # allowing the signing loop to finish in seconds!
           find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
-          find dist/Deluge.app/Contents/Frameworks -type f -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
+          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
           
+          # Seal primary app core entry points last
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
 
