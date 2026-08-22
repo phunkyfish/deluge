@@ -200,12 +200,14 @@ jobs:
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Ensure Deluge is installed cleanly in site-packages
+          # 3. Ensure Deluge is installed cleanly
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --no-deps .
 
-          # 4. Generate spec file without local path conflicts
-          # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively
-          # link the universal2 engine and structure its internal sys.path arrays cleanly.
+          # 4. Discover exact host path for PyGObject ('gi')
+          GI_PARENT=$(PYTHONPATH="$SYS_SITEPACKAGES" $PYTHON_FRAMEWORK -c "import gi, os; print(os.path.dirname(os.path.dirname(gi.__file__)))")
+          echo "Found gi parent at: $GI_PARENT"
+
+          # 5. Generate spec file mapping 'gi' explicitly
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
@@ -218,6 +220,11 @@ jobs:
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
+            --hidden-import=gi \
+            --hidden-import=gi.repository.Gtk \
+            --hidden-import=gi.repository.Gdk \
+            --hidden-import=gi.repository.GLib \
+            --hidden-import=gi.repository.GObject \
             --hidden-import=deluge.ui.gtk3.gtkui \
             --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=zope \
@@ -225,12 +232,12 @@ jobs:
             --hidden-import=libtorrent \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
+            --add-data "$GI_PARENT/gi:gi" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 5. Execute build
-          # Execute compilation targeting the cleanly isolated spec file layout directly
-          pyinstaller --clean --noconfirm Deluge.spec
+          # 6. Build clean executable
+          pyinstaller --clean Deluge.spec
 
           # ====================================================================
           # HYPER-COMPLIANT SLIM PYTHON FRAMEWORK STRUCTURAL EMBED
