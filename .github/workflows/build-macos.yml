@@ -298,26 +298,18 @@ jobs:
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
-          # Remove dangling workspace development symlinks before starting validation loops
-          find dist/Deluge.app -type l -delete
+          # FIXED CODE:
+          find secure_dmg_staging/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) \
+            -exec codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" --keychain build.keychain {} \;
 
-          # Re-apply our required functional symlink anchors securely
-          ln -sf "Versions/3.11/Python" "dist/Deluge.app/Contents/Frameworks/Python.framework/Python"
-          ln -sf "Versions/3.11/Resources" "dist/Deluge.app/Contents/Frameworks/Python.framework/Resources"
-          ln -sf "Python.framework/Versions/3.11/Python" "dist/Deluge.app/Contents/Frameworks/Python"
+          codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+            --keychain build.keychain "secure_dmg_staging/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
 
-          # Cryptographically seal resources components inside-out with secure timestamps
-          find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
+          codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "$SIGNING_IDENTITY" \
+            --keychain build.keychain secure_dmg_staging/Deluge.app/Contents/MacOS/Deluge
 
-          # Target the real inner versioned binary block file inside the framework matrix wrapper
-          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "dist/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
-
-          # Target only compiled binary extensions inside Frameworks to prevent bottlenecks
-          find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" -o -name "Python" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
-
-          # Seal primary app core entry points last
-          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
-          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
+          codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "$SIGNING_IDENTITY" \
+            --keychain build.keychain secure_dmg_staging/Deluge.app
 
           echo "Application signing pass successfully completed."
 
