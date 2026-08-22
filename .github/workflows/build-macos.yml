@@ -171,10 +171,13 @@ jobs:
           rm -rf build/ dist/ *.spec run_deluge.py 2>/dev/null || true
 
           # Synthesize a clean local bootstrap entrypoint script
-          echo "import deluge.ui.gtk3.app" > run_deluge.py
+          echo "from deluge.ui.gtk3.gtkui import GtkUI" > run_deluge.py
           echo "import sys" >> run_deluge.py
+          echo "def start():" >> run_deluge.py
+          echo "    ui = GtkUI()" >> run_deluge.py
+          echo "    ui.start()" >> run_deluge.py
           echo "if __name__ == '__main__':" >> run_deluge.py
-          echo "    sys.exit(deluge.ui.gtk3.app.start_ui())" >> run_deluge.py
+          echo "    start()" >> run_deluge.py
 
           # Extract explicit system paths out of the active Python.org framework
           SYS_SITEPACKAGES="/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages"
@@ -209,12 +212,12 @@ jobs:
             -i "deluge/ui/data/pixmaps/deluge.icns" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
+            --exclude-module=setuptools \
             --exclude-module=pkg_resources \
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
-            --hidden-import=deluge.ui.gtk3.app \
             --hidden-import=deluge.ui.gtk3.gtkui \
             --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=zope \
