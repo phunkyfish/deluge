@@ -200,7 +200,6 @@ jobs:
             --hidden-import=libtorrent \
             --paths="$SYS_SITEPACKAGES" \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
-            --framework="/Library/Frameworks/Python.framework" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
@@ -228,54 +227,9 @@ jobs:
           # HYPER-COMPLIANT SLIM PYTHON FRAMEWORK STRUCTURAL EMBED
           # ====================================================================
 
-          echo "Injecting full universal Python framework assets following Apple structural rules..."
-          APP_FRAMEWORKS="$GITHUB_WORKSPACE/dist/Deluge.app/Contents/Frameworks"
-
-          # 1. Clean previous partial builds
-          rm -rf "$APP_FRAMEWORKS/Python.framework" "$APP_FRAMEWORKS/Python"
-
-          # 2. Build Apple standard framework directory layout
-          mkdir -p "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources"
-          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
-          chmod 755 "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
-
-          # 3. Create mandatory Info.plist
-          cat <<EOF > "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>English</string>
-              <key>CFBundleExecutable</key>
-              <string>Python</string>
-              <key>CFBundleIdentifier</key>
-              <string>org.python.python</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>Python</string>
-              <key>CFBundlePackageType</key>
-              <string>FMWK</string>
-              <key>CFBundleShortVersionString</key>
-              <string>3.11.9</string>
-              <key>CFBundleVersion</key>
-              <string>3.11.9</string>
-          </dict>
-          </plist>
-          EOF
-
-          # 4. Create standard Apple Framework symlinks using Versions/Current
-          cd "$APP_FRAMEWORKS/Python.framework/Versions"
-          ln -sf 3.11 Current
-          cd "$APP_FRAMEWORKS/Python.framework"
-          ln -sf Versions/Current/Python Python
-          ln -sf Versions/Current/Resources Resources
-
-          # 5. Create relative symlink for PyInstaller bootloader
-          cd "$APP_FRAMEWORKS"
-          ln -sf Python.framework/Versions/3.11/Python Python
-          cd "$GITHUB_WORKSPACE"
+          APP_PATH="$GITHUB_WORKSPACE/dist/Deluge.app"
+          APP_FRAMEWORKS="$APP_PATH/Contents/Frameworks"
+          APP_RESOURCES="$APP_PATH/Contents/Resources"
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
@@ -308,12 +262,16 @@ jobs:
           echo "Rewriting internal library identification headers for Gatekeeper compliance..."
           FW_DIR="dist/Deluge.app/Contents/Frameworks"
 
-          # FIXED TARGETING: Explicitly filter for *.dylib and *.so files only.
-          # This guarantees that your core 'Python' binary and its symlinks are completely
-          # bypassed, keeping their native Mach-O load headers uncorrupted!
-          find "$FW_DIR" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r dylib; do
-            bname=$(basename "$dylib")
-            install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib" 2>/dev/null || true
+          # 1. Set explicit Mach-O ID on the embedded Python binary
+          if [ -f "$APP_FRAMEWORKS/Python" ]; then
+            chmod 755 "$APP_FRAMEWORKS/Python"
+            install_name_tool -id "@executable_path/../Frameworks/Python" "$APP_FRAMEWORKS/Python" 2>/dev/null || true
+          fi
+
+          # 2. Fix IDs on all dylibs and C-extensions (.so files)
+          find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r lib; do
+            bname=$(basename "$lib")
+            install_name_tool -id "@executable_path/../Frameworks/$bname" "$lib" 2>/dev/null || true
           done
 
           # ====================================================================
