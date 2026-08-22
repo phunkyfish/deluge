@@ -198,6 +198,8 @@ jobs:
             --exclude-module=pkg_resources \
             --collect-all gi \
             --collect-all deluge \
+            --collect-all twisted \
+            --collect-all zope \
             --hidden-import=libtorrent \
             --paths="$SYS_SITEPACKAGES" \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
