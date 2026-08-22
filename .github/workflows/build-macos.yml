@@ -233,14 +233,19 @@ jobs:
 
           # Copy the core interpreter engine binary directly into the official framework execution layer
           cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+          chmod 755 "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
 
           # Generate the mandatory structural Info.plist metadata file that Apple requires to accept the framework bundle
           printf '<?xml version="1.0" encoding="UTF-8"?>\n' > "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '<plist version="1.0">\n<dict>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          printf '    <key>CFBundleDevelopmentRegion</key>\n    <string>English</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          printf '    <key>CFBundleExecutable</key>\n    <string>Python</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '    <key>CFBundleIdentifier</key>\n    <string>org.python.python</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          printf '    <key>CFBundleName</key>\n    <string>Python</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '    <key>CFBundlePackageType</key>\n    <string>FMWK</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '    <key>CFBundleShortVersionString</key>\n    <string>3.11.9</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          printf '    <key>CFBundleVersion</key>\n    <string>3.11.9</string>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '</dict>\n</plist>\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
 
           # Establish the top-level symlink pointers that Apple's validation engines demand
@@ -294,7 +299,6 @@ jobs:
 
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
-
 
           # 1. Sign embedded Python framework bundle
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
