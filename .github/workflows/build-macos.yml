@@ -157,11 +157,18 @@ jobs:
           cat <<'EOF' > gi_runtime_hook.py
           import os
           import sys
-          if getattr(sys, 'frozen', False):
-              _base = os.path.dirname(os.path.dirname(sys.executable))
-              os.environ['GI_TYPELIB_PATH'] = os.path.join(_base, 'Resources', 'gi_typelibs')
-              os.environ['XDG_DATA_DIRS'] = os.path.join(_base, 'Resources', 'share')
-              os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(_base, 'Resources', 'glib-2.0', 'schemas')
+
+          # Resolve bundle paths
+          bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+          frameworks_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Frameworks'))
+
+          if not os.path.exists(frameworks_dir):
+              frameworks_dir = bundle_dir
+
+          # Force dyld and GI to look inside Frameworks
+          os.environ['DYLD_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
+          os.environ['DYLD_FRAMEWORK_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_FRAMEWORK_PATH', '')}"
+          os.environ['GI_TYPELIB_PATH'] = f"{bundle_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
           EOF
 
           # ====================================================================
@@ -237,16 +244,23 @@ jobs:
           # 4. Build app bundle
           pyinstaller --clean Deluge.spec
 
-          # 5. POST-BUILD REPAIR: Relink hardcoded Homebrew Cellar paths to @executable_path
+          # 5. POST-BUILD REPAIR: Set LC_RPATH and relink dependencies
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
+          APP_MACOS="dist/Deluge.app/Contents/MacOS"
+
+          echo "Adding @executable_path/../Frameworks to binary rpaths..."
+          install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
 
           echo "Relinking Homebrew dynamic dependencies inside App Bundle..."
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
-            # Find any references pointing into Homebrew Cellar
+            # Add rpath to shared libraries
+            install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
+            install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary" 2>/dev/null || true
+
+            # Fix hardcoded Homebrew Cellar links
             otool -L "$binary" | grep "/opt/homebrew/Cellar" | awk '{print $1}' | while read -r dep; do
               dep_name=$(basename "$dep")
-              # Rewrite the hardcoded path to use the relative Frameworks folder
-              install_name_tool -change "$dep" "@executable_path/../Frameworks/$dep_name" "$binary" 2>/dev/null || true
+              install_name_tool -change "$dep" "@rpath/$dep_name" "$binary" 2>/dev/null || true
             done
           done
 
