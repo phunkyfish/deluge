@@ -299,17 +299,21 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
 
           # FIXED CODE:
-          find secure_dmg_staging/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) \
+          # 1. Sign all dynamic libraries and Python C-extensions inside dist
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) \
             -exec codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" --keychain build.keychain {} \;
 
+          # 2. Sign embedded Python framework binary
           codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
-            --keychain build.keychain "secure_dmg_staging/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
+            --keychain build.keychain "dist/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
 
+          # 3. Sign main executable WITH entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "$SIGNING_IDENTITY" \
-            --keychain build.keychain secure_dmg_staging/Deluge.app/Contents/MacOS/Deluge
+            --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
 
+          # 4. Sign outer App bundle WITH entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "$SIGNING_IDENTITY" \
-            --keychain build.keychain secure_dmg_staging/Deluge.app
+            --keychain build.keychain dist/Deluge.app
 
           echo "Application signing pass successfully completed."
 
