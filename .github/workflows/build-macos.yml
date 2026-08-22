@@ -274,6 +274,9 @@ jobs:
             install_name_tool -id "@executable_path/../Frameworks/$bname" "$lib" 2>/dev/null || true
           done
 
+          ls -la dist/Deluge.app/Contents/Frameworks/
+
+
           # ====================================================================
           # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
           # ====================================================================
