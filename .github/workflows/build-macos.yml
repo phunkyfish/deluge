@@ -201,7 +201,6 @@ jobs:
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
-            --copy-metadata zope.interface \
             --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=libtorrent \
@@ -219,6 +218,15 @@ jobs:
           APP_PATH="$GITHUB_WORKSPACE/dist/Deluge.app"
           APP_FRAMEWORKS="$APP_PATH/Contents/Frameworks"
           APP_RESOURCES="$APP_PATH/Contents/Resources"
+
+          echo "Injecting zope namespace package into Frameworks..."
+
+          # Fallback copy to ensure the namespace folder exists physically
+          ZOPE_SRC=$(python3 -c "import zope, os; print(os.path.dirname(zope.__file__))" 2>/dev/null || true)
+          if [ -n "$ZOPE_SRC" ] && [ -d "$ZOPE_SRC" ]; then
+            mkdir -p "$APP_FRAMEWORKS/zope"
+            cp -R "$ZOPE_SRC/" "$APP_FRAMEWORKS/zope/"
+          fi
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
