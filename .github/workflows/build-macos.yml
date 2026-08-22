@@ -207,11 +207,12 @@ jobs:
           with open("Deluge.spec", "r") as f:
             content = f.read()
 
-          old_analysis = "a = Analysis("
-          new_analysis = """a = Analysis(
-            frameworks=["/Library/Frameworks/Python.framework"],"""
-          content = content.replace(old_analysis, new_analysis, 1)
+          # Append frameworks keyword argument right after pathex=[]
+          old_target = "pathex=["
+          new_target = "frameworks=['/Library/Frameworks/Python.framework'],\n    pathex=["
+            content = content.replace(old_target, new_target, 1)
 
+          # Add bundle_identifier to BUNDLE block
           old_bundle = "app = BUNDLE("
           new_bundle = """app = BUNDLE(
             bundle_identifier="org.deluge-torrent.deluge","""
