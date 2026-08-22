@@ -192,22 +192,19 @@ jobs:
 
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
-          # 1. Force-install dependencies directly into $SYS_SITEPACKAGES
+          # 1. Install dependencies
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" pygobject zope.interface
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
-          # 2. Inject __init__.py into zope namespace
+          # 2. Inject zope __init__.py
           ZOPE_DIR="$SYS_SITEPACKAGES/zope"
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Explicitly verify GI exists in $SYS_SITEPACKAGES
           GI_DIR="$SYS_SITEPACKAGES/gi"
-
-          # 4. Export PYTHONPATH so PyInstaller discovers modules seamlessly
           export PYTHONPATH="$SYS_SITEPACKAGES:$PYTHONPATH"
 
-          # 5. Generate spec file with direct sys-sitepackage paths
+          # 3. Generate spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
@@ -237,8 +234,21 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 6. Build clean executable
+          # 4. Build app bundle
           pyinstaller --clean Deluge.spec
+
+          # 5. POST-BUILD REPAIR: Relink hardcoded Homebrew Cellar paths to @executable_path
+          APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
+
+          echo "Relinking Homebrew dynamic dependencies inside App Bundle..."
+          find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
+            # Find any references pointing into Homebrew Cellar
+            otool -L "$binary" | grep "/opt/homebrew/Cellar" | awk '{print $1}' | while read -r dep; do
+              dep_name=$(basename "$dep")
+              # Rewrite the hardcoded path to use the relative Frameworks folder
+              install_name_tool -change "$dep" "@executable_path/../Frameworks/$dep_name" "$binary" 2>/dev/null || true
+            done
+          done
 
           # ====================================================================
           # HYPER-COMPLIANT SLIM PYTHON FRAMEWORK STRUCTURAL EMBED
