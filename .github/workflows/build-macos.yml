@@ -202,6 +202,25 @@ jobs:
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             run_deluge.py
 
+            # 2. Patch spec for native Framework bundle layout
+            python3 -c '
+            with open("Deluge.spec", "r") as f:
+                content = f.read()
+
+            old_analysis = "a = Analysis("
+            new_analysis = """a = Analysis(
+                frameworks=["/Library/Frameworks/Python.framework"],"""
+            content = content.replace(old_analysis, new_analysis, 1)
+
+            old_bundle = "app = BUNDLE("
+            new_bundle = """app = BUNDLE(
+                bundle_identifier="org.deluge-torrent.deluge","""
+            content = content.replace(old_bundle, new_bundle, 1)
+
+            with open("Deluge.spec", "w") as f:
+                f.write(content)
+            '
+
           # Execute compilation targeting the cleanly isolated spec file layout directly
           pyinstaller --clean --noconfirm Deluge.spec
 
@@ -226,15 +245,54 @@ jobs:
           # HYPER-COMPLIANT SLIM PYTHON FRAMEWORK STRUCTURAL EMBED
           # ====================================================================
 
-          echo "Injecting standalone universal Python runtime binary for PyInstaller..."
+          echo "Injecting full universal Python framework assets following Apple structural rules..."
           APP_FRAMEWORKS="$GITHUB_WORKSPACE/dist/Deluge.app/Contents/Frameworks"
 
-          # 1. Purge any Python.framework directory to prevent Info.plist bundle validation collisions
+          # 1. Clean previous partial builds
           rm -rf "$APP_FRAMEWORKS/Python.framework" "$APP_FRAMEWORKS/Python"
 
-          # 2. Copy Python binary directly to Contents/Frameworks/Python (matching PyInstaller bootloader expectation)
-          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python"
-          chmod 755 "$APP_FRAMEWORKS/Python"
+          # 2. Build Apple standard framework directory layout
+          mkdir -p "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources"
+          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+          chmod 755 "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+
+          # 3. Create mandatory Info.plist
+          cat <<EOF > "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>English</string>
+              <key>CFBundleExecutable</key>
+              <string>Python</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.python.python</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>Python</string>
+              <key>CFBundlePackageType</key>
+              <string>FMWK</string>
+              <key>CFBundleShortVersionString</key>
+              <string>3.11.9</string>
+              <key>CFBundleVersion</key>
+              <string>3.11.9</string>
+          </dict>
+          </plist>
+          EOF
+
+          # 4. Create standard Apple Framework symlinks using Versions/Current
+          cd "$APP_FRAMEWORKS/Python.framework/Versions"
+          ln -sf 3.11 Current
+          cd "$APP_FRAMEWORKS/Python.framework"
+          ln -sf Versions/Current/Python Python
+          ln -sf Versions/Current/Resources Resources
+
+          # 5. Create relative symlink for PyInstaller bootloader
+          cd "$APP_FRAMEWORKS"
+          ln -sf Python.framework/Versions/3.11/Python Python
+          cd "$GITHUB_WORKSPACE"
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
@@ -274,9 +332,6 @@ jobs:
             bname=$(basename "$dylib")
             install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib" 2>/dev/null || true
           done
-
-          # Set binary ID for the standalone Python executable
-          install_name_tool -id "@executable_path/../Frameworks/Python" "$APP_FRAMEWORKS/Python" 2>/dev/null || true
 
           # ====================================================================
           # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
