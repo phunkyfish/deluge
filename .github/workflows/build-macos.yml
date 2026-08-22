@@ -263,12 +263,17 @@ jobs:
           </plist>
           EOF
 
-          # 4. Standard Framework interior symlinks
-          ln -sf "Versions/3.11/Python" "$APP_FRAMEWORKS/Python.framework/Python"
-          ln -sf "Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Resources"
+          # 4. Standard Apple-compliant Framework symlink structure (Inside Python.framework ONLY)
+          cd "$APP_FRAMEWORKS/Python.framework/Versions"
+          ln -sf 3.11 Current
+          cd "$APP_FRAMEWORKS/Python.framework"
+          ln -sf Versions/Current/Python Python
+          ln -sf Versions/Current/Resources Resources
+          cd "$GITHUB_WORKSPACE"
 
-          # 5. Provide exact binary alias PyInstaller bootloader is searching for
-          ln -sf "Python.framework/Versions/3.11/Python" "$APP_FRAMEWORKS/Python"
+          # 5. Provide Python binary as a REAL file for PyInstaller (NO SYMLINK)
+          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python"
+          chmod 755 "$APP_FRAMEWORKS/Python"
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
