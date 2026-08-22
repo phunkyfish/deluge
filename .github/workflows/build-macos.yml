@@ -212,10 +212,9 @@ jobs:
           new_target = "frameworks=['/Library/Frameworks/Python.framework'],\n    pathex=["
           content = content.replace(old_target, new_target, 1)
 
-          # Add bundle_identifier to BUNDLE block
-          old_bundle = "app = BUNDLE("
-          new_bundle = """app = BUNDLE(
-            bundle_identifier="org.deluge-torrent.deluge","""
+          # Safely inject bundle_identifier as a keyword argument inside BUNDLE()
+          old_bundle = "console=False,"
+          new_bundle = "console=False,\n    bundle_identifier='org.deluge-torrent.deluge',"
           content = content.replace(old_bundle, new_bundle, 1)
 
           with open("Deluge.spec", "w") as f:
