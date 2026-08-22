@@ -200,7 +200,9 @@ jobs:
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
-            --collect-submodules zope \
+            --collect-all zope.interface \
+            --copy-metadata zope.interface \
+            --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=libtorrent \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
