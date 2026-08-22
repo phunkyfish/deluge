@@ -187,7 +187,13 @@ jobs:
           # NATIVE COMPILATION PIPELINE
           # ====================================================================
 
-          # 1. Generate the baseline spec using native command parameters.
+          # 1. Touch __init__.py in host site-packages BEFORE spec generation
+          python3 -c "import zope, os; p=os.path.join(os.path.dirname(zope.__file__), '__init__.py'); open(p, 'a').close() if not os.path.exists(p) else None"
+
+          # 2. Discover parent folder for --add-data
+          ZOPE_PARENT=$(python3 -c "import zope.interface, os; print(os.path.dirname(os.path.dirname(zope.interface.__file__)))")
+
+          # 3. Generate spec including --add-data "$ZOPE_PARENT/zope:zope"
           # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
@@ -200,12 +206,12 @@ jobs:
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
-            --collect-all zope.interface \
-            --collect-submodules zope \
             --hidden-import=zope \
             --hidden-import=zope.interface \
+            --hidden-import=zope.interface.adapter \
             --hidden-import=libtorrent \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
+            --add-data "$ZOPE_PARENT/zope:zope" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
@@ -219,19 +225,6 @@ jobs:
           APP_PATH="$GITHUB_WORKSPACE/dist/Deluge.app"
           APP_FRAMEWORKS="$APP_PATH/Contents/Frameworks"
           APP_RESOURCES="$APP_PATH/Contents/Resources"
-
-          # 1. Discover host zope directory
-          ZOPE_HOST_DIR=$(python3 -c "import zope.interface, os; print(os.path.dirname(os.path.dirname(zope.interface.__file__)))" 2>/dev/null || true)
-
-          if [ -n "$ZOPE_HOST_DIR" ] && [ -d "$ZOPE_HOST_DIR" ]; then
-            echo "Copying full zope tree from $ZOPE_HOST_DIR..."
-            mkdir -p "$APP_FRAMEWORKS/zope"
-            cp -R "$ZOPE_HOST_DIR/" "$APP_FRAMEWORKS/zope/"
-
-            # 2. Inject explicit __init__.py so pyimod02_importers recognizes it as a standard package
-            touch "$APP_FRAMEWORKS/zope/__init__.py"
-            echo "__import__('pkg_resources').declare_namespace(__name__)" > "$APP_FRAMEWORKS/zope/__init__.py" 2>/dev/null || true
-          fi
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
