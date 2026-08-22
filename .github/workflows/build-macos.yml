@@ -192,19 +192,21 @@ jobs:
 
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
-          # 1. Force-install zope.interface into $SYS_SITEPACKAGES
+          # 1. Force-install zope.interface and deluge into $SYS_SITEPACKAGES
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" zope.interface
+          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
           # 2. Inject __init__.py into zope namespace
           ZOPE_DIR="$SYS_SITEPACKAGES/zope"
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Ensure Deluge is installed cleanly
-          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --no-deps .
+          # 3. Discover Homebrew site-packages location for PyGObject (gi)
+          HB_SITEPACKAGES=$(brew --prefix)/lib/python3.11/site-packages
+          export PYTHONPATH="$SYS_SITEPACKAGES:$HB_SITEPACKAGES:$PYTHONPATH"
 
-          # 4. Discover exact host path for PyGObject ('gi')
-          GI_PARENT=$(PYTHONPATH="$SYS_SITEPACKAGES" $PYTHON_FRAMEWORK -c "import gi, os; print(os.path.dirname(os.path.dirname(gi.__file__)))")
+          # 4. Discover GI_PARENT using the updated PYTHONPATH
+          GI_PARENT=$($PYTHON_FRAMEWORK -c "import gi, os; print(os.path.dirname(os.path.dirname(gi.__file__)))")
           echo "Found gi parent at: $GI_PARENT"
 
           # 5. Generate spec file mapping 'gi' explicitly
@@ -212,6 +214,7 @@ jobs:
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
+            --paths="$HB_SITEPACKAGES" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=setuptools \
