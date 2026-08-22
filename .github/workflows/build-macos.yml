@@ -207,23 +207,6 @@ jobs:
           pyinstaller --clean --noconfirm Deluge.spec
 
           # ====================================================================
-          # SECURE FRAMEWORKS CONSOLIDATION PASS VIA DYLIBBUNDLER
-          # ====================================================================
-          echo "Executing native shared library consolidation passes..."
-          mkdir -p dist/Deluge.app/Contents/Frameworks
-
-          # Run dylibbundler first to clear standard external shared objects
-          dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
-            -s /opt/homebrew/lib -s /usr/local/lib \
-            -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/Frameworks/ -ns
-
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) -exec dylibbundler -od -b -x {} \
-            -s /opt/homebrew/lib -s /usr/local/lib \
-            -p @executable_path/../Frameworks/ \
-            -d dist/Deluge.app/Contents/Frameworks/ -ns \; 2>/dev/null || true
-
-          # ====================================================================
           # HYPER-COMPLIANT SLIM PYTHON FRAMEWORK STRUCTURAL EMBED
           # ====================================================================
 
@@ -259,9 +242,6 @@ jobs:
           # ====================================================================
           # CLEAN IDENTIFICATION REWRITING PASS (FIXED)
           # ====================================================================
-          echo "Rewriting internal library identification headers for Gatekeeper compliance..."
-          FW_DIR="dist/Deluge.app/Contents/Frameworks"
-
           # 1. Set explicit Mach-O ID on the embedded Python binary
           if [ -f "$APP_FRAMEWORKS/Python" ]; then
             chmod 755 "$APP_FRAMEWORKS/Python"
@@ -275,7 +255,6 @@ jobs:
           done
 
           ls -la dist/Deluge.app/Contents/Frameworks/
-
 
           # ====================================================================
           # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
