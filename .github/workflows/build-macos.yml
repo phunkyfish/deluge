@@ -311,9 +311,12 @@ jobs:
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
             --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
 
-          # 4. Sign outer App bundle WITH entitlements
-          codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+          # 4. Perform a deep, strict sign on the entire bundle WITH entitlements
+          codesign --force --deep --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
             --keychain build.keychain dist/Deluge.app
+
+          echo "Verifying local code signature..."
+          codesign --verify --verbose=4 --deep --strict dist/Deluge.app
 
           echo "Application signing pass successfully completed."
 
