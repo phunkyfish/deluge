@@ -210,7 +210,7 @@ jobs:
           # Append frameworks keyword argument right after pathex=[]
           old_target = "pathex=["
           new_target = "frameworks=['/Library/Frameworks/Python.framework'],\n    pathex=["
-            content = content.replace(old_target, new_target, 1)
+          content = content.replace(old_target, new_target, 1)
 
           # Add bundle_identifier to BUNDLE block
           old_bundle = "app = BUNDLE("
