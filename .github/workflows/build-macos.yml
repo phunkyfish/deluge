@@ -275,6 +275,9 @@ jobs:
             install_name_tool -id "@executable_path/../Frameworks/$bname" "$dylib" 2>/dev/null || true
           done
 
+          # Set binary ID for the standalone Python executable
+          install_name_tool -id "@executable_path/../Frameworks/Python" "$APP_FRAMEWORKS/Python" 2>/dev/null || true
+
           # ====================================================================
           # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
           # ====================================================================
