@@ -289,9 +289,9 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Sign Python.framework as a unified Bundle
+          # 1. Sign Python as a unified Bundle
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-            --keychain build.keychain "$APP_FRAMEWORKS/Python.framework"
+            --keychain build.keychain "$APP_FRAMEWORKS/Python"
 
           # 2. Sign all dynamic libraries and C-extensions recursively (excluding framework dirs)
           find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" \) \
