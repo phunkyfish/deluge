@@ -210,6 +210,10 @@ jobs:
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
+            --collect-all zope.interface \
+            --collect-submodules deluge.ui.gtk3 \
+            --hidden-import=deluge.ui.gtk3.app \
+            --hidden-import=deluge.ui.gtk3.gtkui \
             --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=zope.interface.adapter \
