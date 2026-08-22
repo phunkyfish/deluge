@@ -164,6 +164,23 @@ jobs:
               os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(_base, 'Resources', 'glib-2.0', 'schemas')
           EOF
 
+          # Generate localized runtime environment initialization hooks
+          cat <<'EOF' > zope_runtime_hook.py
+          import sys, os
+          from pathlib import Path
+
+          # Force the Frameworks directory into the sys.path and zope namespace path
+          frameworks_dir = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(__file__).parent
+          if str(frameworks_dir) not in sys.path:
+            sys.path.insert(0, str(frameworks_dir))
+
+          try:
+            import zope
+            zope.__path__.append(str(frameworks_dir / 'zope'))
+          except ImportError:
+            pass
+          EOF
+
           # ====================================================================
           # CLEAR ALL OLD STALE COMPILATION CACHES
           # ====================================================================
@@ -192,6 +209,7 @@ jobs:
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
+            --runtime-hook=zope_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
             --exclude-module=PIL \
