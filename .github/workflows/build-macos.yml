@@ -280,6 +280,10 @@ jobs:
           # ====================================================================
           echo "Setting permissions on the bundle before signing..."
           APP_PATH="$GITHUB_WORKSPACE/dist/Deluge.app"
+
+          # Remove broken symlinks that crash 'codesign --verify'
+          find "$APP_PATH" -type l ! -exec test -e {} \; -delete
+
           chmod -R 755 $APP_PATH
 
           echo "Executing deep structured inside-out architecture signing loops..."
