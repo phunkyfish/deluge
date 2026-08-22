@@ -29,18 +29,18 @@ jobs:
           # Isolate version tokens away from the URL string to prevent markdown rendering bugs
           export PY_MAJOR_VERSION="3.11"
           export PY_PATCH_VERSION="3.11.9"
-          
+
           echo "Targeting Python version: ${PY_PATCH_VERSION}"
-          
+
           # Construct the clean download query path dynamically
           export DOWNLOAD_URL="https://python.org/ftp/python/${PY_PATCH_VERSION}/python-${PY_PATCH_VERSION}-macos11.pkg"
-          
+
           echo "Downloading from path: ${DOWNLOAD_URL}"
           curl -L -o python_installer.pkg "${DOWNLOAD_URL}"
-          
+
           echo "Installing universal2 framework package..."
           sudo installer -pkg python_installer.pkg -target /
-          
+
           # Force export the new bin target location straight to the active runner environment
           echo "/Library/Frameworks/Python.framework/Versions/${PY_MAJOR_VERSION}/bin" >> $GITHUB_PATH
 
@@ -84,7 +84,7 @@ jobs:
       - name: Compile and Package App
         run: |
           export PATH="/Library/Frameworks/Python.framework/Versions/3.11/bin:$PATH"
-          python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller 
+          python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
 
           # 1. Resolve application production runtime version tags
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -126,24 +126,24 @@ jobs:
 
           # 3. COMPLIANT LOCAL SOURCE COMPILATIONS (Emits native universal2 dual-slices)
           python3 -m pip wheel --no-binary cffi,pygobject,markupsafe -w universal_wheels cffi pygobject markupsafe
-                      
+
           # 4. Gather the rest of your app dependencies
           python3 -m pip wheel --find-links=universal_wheels -w universal_wheels .
-          
+
           # 5. RESOLVE DUPLICATE OVERLAPS
           mkdir -p dependency_tree
           python3 -m pip download --only-binary=:all: --find-links=universal_wheels -d dependency_tree .
-          
+
           for pkg in cryptography twisted setproctitle pyOpenSSL service_identity deluge rencode cffi zope_interface libtorrent pygobject markupsafe mako; do
             rm -f dependency_tree/${pkg}-*.whl 2>/dev/null || true
           done
           mv dependency_tree/*.whl universal_wheels/ 2>/dev/null || true
-          
+
           # CRITICAL FIXED POSITION: Purge any single-architecture thin wheels out of the staging pool.
           # This leaves your custom universal2 wheels untouched, forcing pip to select them.
           rm -f universal_wheels/*_arm64.whl
           rm -f universal_wheels/*_x86_64.whl
-          
+
           # Force clean universal stack synchronization installation
           python3 -m pip install --force-reinstall --no-deps universal_wheels/*.whl
           python3 -m pip install . --no-deps
@@ -178,7 +178,7 @@ jobs:
 
           # Extract explicit system paths out of the active Python.org framework
           SYS_SITEPACKAGES="/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages"
-          
+
           # FIXED LOGIC: Programmatically resolve the exact absolute file path to the true universal2 library
           PYTHON_FRAMEWORK_LIB="/Library/Frameworks/Python.framework/Versions/3.11/Python"
           echo "Explicitly binding PyInstaller to the core framework file at: $PYTHON_FRAMEWORK_LIB"
@@ -187,7 +187,7 @@ jobs:
           # NATIVE COMPILATION PIPELINE
           # ====================================================================
           # 1. Generate the baseline spec using native command parameters.
-          # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively 
+          # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
@@ -210,7 +210,7 @@ jobs:
           # ====================================================================
           echo "Executing native shared library consolidation passes..."
           mkdir -p dist/Deluge.app/Contents/Frameworks
-          
+
           # Run dylibbundler first to clear standard external shared objects
           dylibbundler -od -b -x dist/Deluge.app/Contents/MacOS/Deluge \
             -s /opt/homebrew/lib -s /usr/local/lib \
@@ -227,13 +227,13 @@ jobs:
           # ====================================================================
           echo "Injecting full universal Python framework assets following Apple structural rules..."
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
-          
+
           # Build a perfectly structured, lean, valid custom Apple Framework tree map
           mkdir -p "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources"
-          
+
           # Copy the core interpreter engine binary directly into the official framework execution layer
           cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
-          
+
           # Generate the mandatory structural Info.plist metadata file that Apple requires to accept the framework bundle
           printf '<?xml version="1.0" encoding="UTF-8"?>\n' > "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
           printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">\n' >> "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
@@ -246,7 +246,7 @@ jobs:
           # Establish the top-level symlink pointers that Apple's validation engines demand
           ln -sf "Versions/3.11/Python" "$APP_FRAMEWORKS/Python.framework/Python"
           ln -sf "Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Resources"
-          
+
           # Create a symlink shortcut at the root of Frameworks to satisfy the PyInstaller bootloader target
           ln -sf "Python.framework/Versions/3.11/Python" "$APP_FRAMEWORKS/Python"
 
@@ -255,14 +255,14 @@ jobs:
           # ====================================================================
           echo "Injecting mandatory GTK runtime assets to protect standalone execution..."
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
-          
+
           LOCAL_BREW="/opt/homebrew"
           if [ ! -d "$LOCAL_BREW" ]; then
             LOCAL_BREW="/usr/local"
           fi
-          
+
           mkdir -p "$APP_RESOURCES/glib-2.0/schemas"
-          
+
           # FIXED TARGETED SCHEMA CAPTURE: Explicitly pull raw XML definitions out of the glib share directories
           cp -r ${LOCAL_BREW}/share/glib-2.0/schemas/* "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
           glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas" 2>/dev/null || true
@@ -280,9 +280,9 @@ jobs:
           # ====================================================================
           echo "Rewriting internal library identification headers for Gatekeeper compliance..."
           FW_DIR="dist/Deluge.app/Contents/Frameworks"
-          
+
           # FIXED TARGETING: Explicitly filter for *.dylib and *.so files only.
-          # This guarantees that your core 'Python' binary and its symlinks are completely 
+          # This guarantees that your core 'Python' binary and its symlinks are completely
           # bypassed, keeping their native Mach-O load headers uncorrupted!
           find "$FW_DIR" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r dylib; do
             bname=$(basename "$dylib")
@@ -292,6 +292,9 @@ jobs:
           # ====================================================================
           # ORDERED INSIDE-OUT CODE SIGNING PIPELINE
           # ====================================================================
+          echo "Setting permissions on the bundle before signing..."
+          chmod -R 755 dist/Deluge.app
+
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
@@ -305,13 +308,13 @@ jobs:
 
           # Cryptographically seal resources components inside-out with secure timestamps
           find dist/Deluge.app/Contents/Resources -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
-          
+
           # Target the real inner versioned binary block file inside the framework matrix wrapper
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "dist/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
-          
+
           # Target only compiled binary extensions inside Frameworks to prevent bottlenecks
           find dist/Deluge.app/Contents/Frameworks -type f \( -name "*.so" -o -name "*.dylib" -o -name "Python" \) -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \; 2>/dev/null || true
-          
+
           # Seal primary app core entry points last
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
           codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain --entitlements entitlements.plist dist/Deluge.app
@@ -322,17 +325,10 @@ jobs:
         run: |
           # 1. Create a pristine, isolated directory for the installer payload
           mkdir -p secure_dmg_staging
-          
+
           # 2. Use native 'ditto' to safely copy the app bundle while preserving all signatures
           ditto dist/Deluge.app secure_dmg_staging/Deluge.app
-          
-          # ====================================================================
-          # CRITICAL STORAGE PACKAGING FIX: Force write/execute permissions
-          # This stops the macOS compression engine from stripping Framework binaries!
-          # ====================================================================
-          echo "Synchronizing file system permission bits across staging folder asset elements..."
-          chmod -R 755 secure_dmg_staging/Deluge.app
-          
+
           # 3. Generate the disk image pointing exclusively to the clean staging folder
           create-dmg \
             --volname "Deluge Universal Installer" \
@@ -354,20 +350,20 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           echo "Submitting installer package to Apple Notary Service..."
-          
+
           # FIX: Explicitly consume the environment variable so the upload target matches the built asset perfectly
           SUBMISSION_OUT=$(xcrun notarytool submit "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait 2>&1)
-          
+
           echo "Notary API Server Response Log:"
           echo "$SUBMISSION_OUT"
-          
+
           # Isolate unique submission token id
           SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
-          
+
           # Evaluate if rejection status was thrown back by Apple validators
           if echo "$SUBMISSION_OUT" | grep -q "status: Invalid" || [ -z "$SUBMISSION_ID" ]; then
             echo "❌ Apple Notary Service credentials or binary validation failed!"
@@ -377,7 +373,7 @@ jobs:
             fi
             exit 1
           fi
-          
+
           # Securely affix approved cloud state ticket to the container filesystem layout
           xcrun stapler staple "Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
@@ -391,6 +387,6 @@ jobs:
         run: |
           echo "Checking application main binary binary structure..."
           lipo -info dist/Deluge.app/Contents/MacOS/Deluge
-          
+
           echo "Checking native compiled Python extensions..."
           find dist/Deluge.app -name "*.so" -exec lipo -info {} \;
