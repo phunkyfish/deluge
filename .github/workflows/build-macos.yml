@@ -192,20 +192,21 @@ jobs:
           # 1. Force-install zope.interface into $SYS_SITEPACKAGES
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" zope.interface
 
-          # 2. Inject __init__.py into the zope namespace directory
+          # 2. Inject __init__.py into zope namespace
           ZOPE_DIR="$SYS_SITEPACKAGES/zope"
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Generate spec file with zope explicitly mapped
+          # 3. Ensure Deluge is installed cleanly in site-packages
+          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --no-deps .
+
+          # 4. Generate spec file without local path conflicts
           # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
-            --paths="." \
-            --paths="$SYS_SITEPACKAGES" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=pkg_resources \
@@ -213,14 +214,12 @@ jobs:
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
-            --collect-submodules deluge \
             --hidden-import=deluge.ui.gtk3.app \
             --hidden-import=deluge.ui.gtk3.gtkui \
-            --hidden-import=deluge.ui.gtk3 \
+            --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=libtorrent \
-            --add-data "deluge:deluge" \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
