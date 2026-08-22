@@ -247,9 +247,6 @@ jobs:
           ln -sf "Versions/3.11/Python" "$APP_FRAMEWORKS/Python.framework/Python"
           ln -sf "Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Resources"
 
-          # Create a symlink shortcut at the root of Frameworks to satisfy the PyInstaller bootloader target
-          ln -sf "Python.framework/Versions/3.11/Python" "$APP_FRAMEWORKS/Python"
-
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
           # ====================================================================
@@ -298,21 +295,21 @@ jobs:
           echo "Executing deep structured inside-out architecture signing loops..."
           security set-keychain-settings -lut 7200 build.keychain
 
-          # FIXED CODE:
-          # 1. Sign all dynamic libraries and Python C-extensions inside dist
+
+          # 1. Sign embedded Python framework bundle
+          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+            --keychain build.keychain "dist/Deluge.app/Contents/Frameworks/Python.framework"
+
+          # 2. Sign all dynamic libraries and Python C-extensions recursively
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" \) \
             -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
-
-          # 2. Sign embedded Python framework binary
-          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-            --keychain build.keychain "dist/Deluge.app/Contents/Frameworks/Python.framework/Versions/3.11/Python"
 
           # 3. Sign main executable WITH entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
             --keychain build.keychain dist/Deluge.app/Contents/MacOS/Deluge
 
-          # 4. Perform a deep, strict sign on the entire bundle WITH entitlements
-          codesign --force --deep --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+          # 4. Sign outer App bundle WITH entitlements
+          codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
             --keychain build.keychain dist/Deluge.app
 
           echo "Verifying local code signature..."
