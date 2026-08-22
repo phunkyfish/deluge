@@ -164,23 +164,6 @@ jobs:
               os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(_base, 'Resources', 'glib-2.0', 'schemas')
           EOF
 
-          # Generate localized runtime environment initialization hooks
-          cat <<'EOF' > zope_runtime_hook.py
-          import sys, os
-          from pathlib import Path
-
-          # Force the Frameworks directory into the sys.path and zope namespace path
-          frameworks_dir = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(__file__).parent
-          if str(frameworks_dir) not in sys.path:
-            sys.path.insert(0, str(frameworks_dir))
-
-          try:
-            import zope
-            zope.__path__.append(str(frameworks_dir / 'zope'))
-          except ImportError:
-            pass
-          EOF
-
           # ====================================================================
           # CLEAR ALL OLD STALE COMPILATION CACHES
           # ====================================================================
@@ -209,7 +192,6 @@ jobs:
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
-            --runtime-hook=zope_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
             --exclude-module=PIL \
@@ -219,6 +201,7 @@ jobs:
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
+            --collect-submodules zope \
             --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=libtorrent \
@@ -237,13 +220,17 @@ jobs:
           APP_FRAMEWORKS="$APP_PATH/Contents/Frameworks"
           APP_RESOURCES="$APP_PATH/Contents/Resources"
 
-          echo "Injecting zope namespace package into Frameworks..."
+          # 1. Discover host zope directory
+          ZOPE_HOST_DIR=$(python3 -c "import zope.interface, os; print(os.path.dirname(os.path.dirname(zope.interface.__file__)))" 2>/dev/null || true)
 
-          # Fallback copy to ensure the namespace folder exists physically
-          ZOPE_SRC=$(python3 -c "import zope, os; print(os.path.dirname(zope.__file__))" 2>/dev/null || true)
-          if [ -n "$ZOPE_SRC" ] && [ -d "$ZOPE_SRC" ]; then
+          if [ -n "$ZOPE_HOST_DIR" ] && [ -d "$ZOPE_HOST_DIR" ]; then
+            echo "Copying full zope tree from $ZOPE_HOST_DIR..."
             mkdir -p "$APP_FRAMEWORKS/zope"
-            cp -R "$ZOPE_SRC/" "$APP_FRAMEWORKS/zope/"
+            cp -R "$ZOPE_HOST_DIR/" "$APP_FRAMEWORKS/zope/"
+
+            # 2. Inject explicit __init__.py so pyimod02_importers recognizes it as a standard package
+            touch "$APP_FRAMEWORKS/zope/__init__.py"
+            echo "__import__('pkg_resources').declare_namespace(__name__)" > "$APP_FRAMEWORKS/zope/__init__.py" 2>/dev/null || true
           fi
 
           # ====================================================================
