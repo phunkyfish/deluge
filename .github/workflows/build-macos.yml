@@ -204,6 +204,8 @@ jobs:
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
+            --paths="." \
+            --paths="$SYS_SITEPACKAGES" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=pkg_resources \
@@ -211,13 +213,14 @@ jobs:
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
-            --collect-submodules deluge.ui.gtk3 \
+            --collect-submodules deluge \
             --hidden-import=deluge.ui.gtk3.app \
             --hidden-import=deluge.ui.gtk3.gtkui \
+            --hidden-import=deluge.ui.gtk3 \
             --hidden-import=zope \
             --hidden-import=zope.interface \
-            --hidden-import=zope.interface.adapter \
             --hidden-import=libtorrent \
+            --add-data "deluge:deluge" \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
