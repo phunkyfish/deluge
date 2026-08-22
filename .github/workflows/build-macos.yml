@@ -245,27 +245,27 @@ jobs:
             run_deluge.py
 
           # 4. Build app bundle
+          # 1. Build app bundle
           pyinstaller --clean Deluge.spec
 
-          # 5. POST-BUILD REPAIR: Copy missing Homebrew GTK/GLib dylibs into Frameworks and fix rpaths
+          # 2. POST-BUILD REPAIR: Bulk copy all Homebrew dynamic libraries into Frameworks
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
+          HB_PREFIX=$(brew --prefix)
 
-          echo "Copying Homebrew GLib/GTK shared libraries into App Bundle..."
-          cp -f $HB_PREFIX/lib/libglib-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f $HB_PREFIX/lib/libgobject-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f $HB_PREFIX/lib/libgio-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f $HB_PREFIX/lib/libgmodule-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f $HB_PREFIX/lib/libgtk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f $HB_PREFIX/lib/libgdk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          echo "Sweeping all Homebrew shared libraries into App Bundle..."
+          # Copy all dylibs from Homebrew lib directory
+          cp -f $HB_PREFIX/lib/*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          echo "Setting rpaths and fixing dependency linkages..."
+          echo "Setting rpaths and re-linking all dynamic binaries..."
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
 
+          # Iterate over every binary inside Frameworks to rewrite paths to @rpath
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
             install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
             install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary" 2>/dev/null || true
 
+            # Relink any remaining /opt/homebrew hardcoded references
             otool -L "$binary" | grep "/opt/homebrew" | awk '{print $1}' | while read -r dep; do
               dep_name=$(basename "$dep")
               install_name_tool -change "$dep" "@rpath/$dep_name" "$binary" 2>/dev/null || true
