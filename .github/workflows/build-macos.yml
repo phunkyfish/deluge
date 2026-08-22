@@ -253,9 +253,11 @@ jobs:
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
           HB_PREFIX=$(brew --prefix)
 
-          echo "Sweeping all Homebrew shared libraries into App Bundle..."
-          # Copy all dylibs from Homebrew lib directory
-          cp -f $HB_PREFIX/lib/*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          echo "Copying targeted GTK3 stack libraries..."
+          # Targeted GTK3/Pango/Cairo/GDK ecosystem dylibs
+          for pkg in glib gobject gio gmodule gthread gtk-3 gdk-3 pango pangocairo pangoft2 cairo cairo-gobject harfbuzz fontconfig freetype atk epoxy gdk_pixbuf-2.0 ffi png16 intl pixman-1; do
+            cp -f $HB_PREFIX/lib/lib${pkg}*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          done
 
           echo "Setting rpaths and re-linking all dynamic binaries..."
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
