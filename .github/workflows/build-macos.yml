@@ -202,24 +202,28 @@ jobs:
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             run_deluge.py
 
-            # 2. Patch spec for native Framework bundle layout
-            python3 -c '
-            with open("Deluge.spec", "r") as f:
-                content = f.read()
+          # 2. Patch Deluge.spec using a clean temporary script
+          cat << 'EOF' > patch_spec.py
+          with open("Deluge.spec", "r") as f:
+            content = f.read()
 
-            old_analysis = "a = Analysis("
-            new_analysis = """a = Analysis(
-                frameworks=["/Library/Frameworks/Python.framework"],"""
-            content = content.replace(old_analysis, new_analysis, 1)
+          old_analysis = "a = Analysis("
+          new_analysis = """a = Analysis(
+            frameworks=["/Library/Frameworks/Python.framework"],"""
+          content = content.replace(old_analysis, new_analysis, 1)
 
-            old_bundle = "app = BUNDLE("
-            new_bundle = """app = BUNDLE(
-                bundle_identifier="org.deluge-torrent.deluge","""
-            content = content.replace(old_bundle, new_bundle, 1)
+          old_bundle = "app = BUNDLE("
+          new_bundle = """app = BUNDLE(
+            bundle_identifier="org.deluge-torrent.deluge","""
+          content = content.replace(old_bundle, new_bundle, 1)
 
-            with open("Deluge.spec", "w") as f:
-                f.write(content)
-            '
+          with open("Deluge.spec", "w") as f:
+            f.write(content)
+          print("Successfully patched Deluge.spec for native macOS framework bundling!")
+          EOF
+
+          python3 patch_spec.py
+          rm patch_spec.py
 
           # Execute compilation targeting the cleanly isolated spec file layout directly
           pyinstaller --clean --noconfirm Deluge.spec
