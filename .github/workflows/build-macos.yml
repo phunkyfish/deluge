@@ -195,6 +195,7 @@ jobs:
             -i "deluge/ui/data/pixmaps/deluge.icns" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
+            --exclude-module=pkg_resources \
             --collect-all gi \
             --collect-all deluge \
             --hidden-import=libtorrent \
