@@ -192,8 +192,8 @@ jobs:
 
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
-          # 1. Install deluge and zope cleanly
-          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" zope.interface
+          # 1. Force-install dependencies directly into $SYS_SITEPACKAGES
+          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" pygobject zope.interface
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
           # 2. Inject __init__.py into zope namespace
@@ -201,27 +201,18 @@ jobs:
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Dynamically discover the physical 'gi' package directory on disk
-          GI_DIR=$(find /opt/homebrew /usr/local /Library/Frameworks -name "gi" -type d 2>/dev/null | grep "site-packages/gi" | head -n 1)
+          # 3. Explicitly verify GI exists in $SYS_SITEPACKAGES
+          GI_DIR="$SYS_SITEPACKAGES/gi"
 
-          if [ -z "$GI_DIR" ]; then
-            # Fallback to any directory containing gi/__init__.py
-            GI_DIR=$(find / -name "__init__.py" 2>/dev/null | grep "/gi/__init__.py" | head -n 1 | xargs dirname)
-          fi
+          # 4. Export PYTHONPATH so PyInstaller discovers modules seamlessly
+          export PYTHONPATH="$SYS_SITEPACKAGES:$PYTHONPATH"
 
-          GI_PARENT=$(dirname "$GI_DIR")
-          echo "Discovered GI Package Directory: $GI_DIR"
-          echo "Discovered GI Parent Directory: $GI_PARENT"
-
-          # 4. Set PYTHONPATH so Python and PyInstaller can resolve 'gi'
-          export PYTHONPATH="$SYS_SITEPACKAGES:$GI_PARENT:$PYTHONPATH"
-
-          # 5. Generate spec file mapping 'gi' explicitly
+          # 5. Generate spec file with direct sys-sitepackage paths
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
-            --paths="$GI_PARENT" \
+            --paths="$SYS_SITEPACKAGES" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=setuptools \
