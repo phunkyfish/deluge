@@ -198,6 +198,7 @@ jobs:
           # ====================================================================
 
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
+          HB_PREFIX=$(brew --prefix)
 
           # 1. Install dependencies
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" pygobject zope.interface
@@ -211,7 +212,7 @@ jobs:
           GI_DIR="$SYS_SITEPACKAGES/gi"
           export PYTHONPATH="$SYS_SITEPACKAGES:$PYTHONPATH"
 
-          # 3. Generate spec file
+          # 3. Generate spec file collecting GI binaries & typelibs
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
@@ -230,6 +231,7 @@ jobs:
             --hidden-import=gi.repository.Gdk \
             --hidden-import=gi.repository.GLib \
             --hidden-import=gi.repository.GObject \
+            --hidden-import=gi.repository.Gio \
             --hidden-import=deluge.ui.gtk3.gtkui \
             --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=zope \
@@ -238,27 +240,33 @@ jobs:
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
             --add-data "$GI_DIR:gi" \
+            --add-data "$HB_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
           # 4. Build app bundle
           pyinstaller --clean Deluge.spec
 
-          # 5. POST-BUILD REPAIR: Set LC_RPATH and relink dependencies
+          # 5. POST-BUILD REPAIR: Copy missing Homebrew GTK/GLib dylibs into Frameworks and fix rpaths
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
 
-          echo "Adding @executable_path/../Frameworks to binary rpaths..."
+          echo "Copying Homebrew GLib/GTK shared libraries into App Bundle..."
+          cp -f $HB_PREFIX/lib/libglib-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f $HB_PREFIX/lib/libgobject-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f $HB_PREFIX/lib/libgio-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f $HB_PREFIX/lib/libgmodule-2.0*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f $HB_PREFIX/lib/libgtk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f $HB_PREFIX/lib/libgdk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+
+          echo "Setting rpaths and fixing dependency linkages..."
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
 
-          echo "Relinking Homebrew dynamic dependencies inside App Bundle..."
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
-            # Add rpath to shared libraries
             install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
             install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary" 2>/dev/null || true
 
-            # Fix hardcoded Homebrew Cellar links
-            otool -L "$binary" | grep "/opt/homebrew/Cellar" | awk '{print $1}' | while read -r dep; do
+            otool -L "$binary" | grep "/opt/homebrew" | awk '{print $1}' | while read -r dep; do
               dep_name=$(basename "$dep")
               install_name_tool -change "$dep" "@rpath/$dep_name" "$binary" 2>/dev/null || true
             done
