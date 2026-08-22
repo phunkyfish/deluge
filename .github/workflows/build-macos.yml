@@ -192,7 +192,7 @@ jobs:
 
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
-          # 1. Force-install zope.interface and deluge into $SYS_SITEPACKAGES
+          # 1. Install deluge and zope cleanly
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" zope.interface
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
@@ -201,20 +201,27 @@ jobs:
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
-          # 3. Discover Homebrew site-packages location for PyGObject (gi)
-          HB_SITEPACKAGES=$(brew --prefix)/lib/python3.11/site-packages
-          export PYTHONPATH="$SYS_SITEPACKAGES:$HB_SITEPACKAGES:$PYTHONPATH"
+          # 3. Dynamically discover the physical 'gi' package directory on disk
+          GI_DIR=$(find /opt/homebrew /usr/local /Library/Frameworks -name "gi" -type d 2>/dev/null | grep "site-packages/gi" | head -n 1)
 
-          # 4. Discover GI_PARENT using the updated PYTHONPATH
-          GI_PARENT=$($PYTHON_FRAMEWORK -c "import gi, os; print(os.path.dirname(os.path.dirname(gi.__file__)))")
-          echo "Found gi parent at: $GI_PARENT"
+          if [ -z "$GI_DIR" ]; then
+            # Fallback to any directory containing gi/__init__.py
+            GI_DIR=$(find / -name "__init__.py" 2>/dev/null | grep "/gi/__init__.py" | head -n 1 | xargs dirname)
+          fi
+
+          GI_PARENT=$(dirname "$GI_DIR")
+          echo "Discovered GI Package Directory: $GI_DIR"
+          echo "Discovered GI Parent Directory: $GI_PARENT"
+
+          # 4. Set PYTHONPATH so Python and PyInstaller can resolve 'gi'
+          export PYTHONPATH="$SYS_SITEPACKAGES:$GI_PARENT:$PYTHONPATH"
 
           # 5. Generate spec file mapping 'gi' explicitly
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=gi_runtime_hook.py \
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
-            --paths="$HB_SITEPACKAGES" \
+            --paths="$GI_PARENT" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=setuptools \
@@ -235,7 +242,7 @@ jobs:
             --hidden-import=libtorrent \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
-            --add-data "$GI_PARENT/gi:gi" \
+            --add-data "$GI_DIR:gi" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
