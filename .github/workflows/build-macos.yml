@@ -187,18 +187,17 @@ jobs:
           # NATIVE COMPILATION PIPELINE
           # ====================================================================
 
-          # 1. Target the exact framework python executable
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
-          # 2. Inject __init__.py into zope using PYTHONPATH
-          PYTHONPATH="$SYS_SITEPACKAGES" $PYTHON_FRAMEWORK -c "import zope.interface, os; zdir=os.path.dirname(os.path.dirname(zope.interface.__file__)); p=os.path.join(zdir, 'zope', '__init__.py'); open(p, 'a').close() if not os.path.exists(p) else None"
+          # 1. Force-install zope.interface into $SYS_SITEPACKAGES
+          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" zope.interface
 
-          # 3. Discover ZOPE_PARENT
-          ZOPE_PARENT=$(PYTHONPATH="$SYS_SITEPACKAGES" $PYTHON_FRAMEWORK -c "import zope.interface, os; print(os.path.dirname(os.path.dirname(zope.interface.__file__)))")
+          # 2. Inject __init__.py into the zope namespace directory
+          ZOPE_DIR="$SYS_SITEPACKAGES/zope"
+          mkdir -p "$ZOPE_DIR"
+          touch "$ZOPE_DIR/__init__.py"
 
-          echo "Found zope parent directory: $ZOPE_PARENT"
-
-          # 4. Generate spec file
+          # 3. Generate spec file with zope explicitly mapped
           # We COMPLETELY drop the custom sed patches. This allows PyInstaller to natively
           # link the universal2 engine and structure its internal sys.path arrays cleanly.
           pyi-makespec --onedir --windowed --name="Deluge" \
@@ -216,7 +215,7 @@ jobs:
             --hidden-import=zope.interface.adapter \
             --hidden-import=libtorrent \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
-            --add-data "$ZOPE_PARENT/zope:zope" \
+            --add-data "$ZOPE_DIR:zope" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
