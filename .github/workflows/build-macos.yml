@@ -227,14 +227,48 @@ jobs:
           # ====================================================================
 
           echo "Injecting full universal Python framework assets following Apple structural rules..."
-          APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
+          APP_FRAMEWORKS="$GITHUB_WORKSPACE/dist/Deluge.app/Contents/Frameworks"
 
-          # Clean up any PyInstaller framework structure that triggers symlink codesign failures
-          rm -rf "$APP_FRAMEWORKS/Python.framework"
+          # 1. Clean previous partial framework builds
+          rm -rf "$APP_FRAMEWORKS/Python.framework" "$APP_FRAMEWORKS/Python"
 
-          # Copy the raw Python binary directly into Frameworks
-          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/libpython3.11.dylib"
-          chmod 755 "$APP_FRAMEWORKS/libpython3.11.dylib"
+          # 2. Build standard Apple Framework layout
+          mkdir -p "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources"
+          cp -f /Library/Frameworks/Python.framework/Versions/3.11/Python "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+          chmod 755 "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+
+          # 3. Create valid Info.plist required for Framework bundles
+          cat <<EOF > "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Resources/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>English</string>
+              <key>CFBundleExecutable</key>
+              <string>Python</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.python.python</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
+              <key>CFBundleName</key>
+              <string>Python</string>
+              <key>CFBundlePackageType</key>
+              <string>FMWK</string>
+              <key>CFBundleShortVersionString</key>
+              <string>3.11.9</string>
+              <key>CFBundleVersion</key>
+              <string>3.11.9</string>
+          </dict>
+          </plist>
+          EOF
+
+          # 4. Standard Framework interior symlinks
+          ln -sf "Versions/3.11/Python" "$APP_FRAMEWORKS/Python.framework/Python"
+          ln -sf "Versions/3.11/Resources" "$APP_FRAMEWORKS/Python.framework/Resources"
+
+          # 5. Provide exact binary alias PyInstaller bootloader is searching for
+          ln -sf "Python.framework/Versions/3.11/Python" "$APP_FRAMEWORKS/Python"
 
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
@@ -290,17 +324,21 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Sign all dynamic libraries, Python runtime, and C-extensions recursively
-          find $APP_PATH -type f \( -name "*.dylib" -o -name "*.so" \) \
+          # 1. Sign Python binary inside framework directly
+          codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+            --keychain build.keychain "$APP_FRAMEWORKS/Python.framework/Versions/3.11/Python"
+
+          # 2. Sign all dynamic libraries and Python C-extensions recursively
+          find "$APP_PATH" -type f \( -name "*.dylib" -o -name "*.so" \) \
             -exec codesign --force --options runtime --timestamp --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain {} \;
 
-          # 2. Sign main executable WITH entitlements
+          # 3. Sign main executable WITH entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-            --keychain build.keychain $APP_PATH/Contents/MacOS/Deluge
+            --keychain build.keychain "$APP_PATH/Contents/MacOS/Deluge"
 
-          # 3. Sign outer App bundle WITH entitlements
+          # 4. Sign outer App bundle WITH entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-            --keychain build.keychain $APP_PATH
+            --keychain build.keychain "$APP_PATH"
 
           echo "Verifying local code signature..."
           codesign --verify --verbose=4 --deep --strict $APP_PATH
