@@ -285,7 +285,9 @@ jobs:
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
           HB_PREFIX=$(brew --prefix)
 
-          echo "Ensuring all Pango/GTK dylibs and symlinks are in Frameworks..."
+          echo "Explicitly harvesting GTK3 & Pango ecosystem dylibs from Homebrew..."
+
+          # Force-copy all Pango, Cairo, GTK, GDK, GLib and support dylibs
           cp -f "$HB_PREFIX"/lib/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -f "$HB_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -f "$HB_PREFIX"/lib/libgtk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
@@ -293,6 +295,13 @@ jobs:
           cp -f "$HB_PREFIX"/lib/libglib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -f "$HB_PREFIX"/lib/libgio*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -f "$HB_PREFIX"/lib/libgobject*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libgmodule*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libharfbuzz*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libfontconfig*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libfreetype*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libatk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libepoxy*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libfribidi*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
           # Create unversioned/versioned alias symlinks for ALL GTK/GLib libraries
           cd "$APP_FRAMEWORKS"
