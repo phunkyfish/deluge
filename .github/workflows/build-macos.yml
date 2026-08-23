@@ -213,7 +213,12 @@ jobs:
           HB_PREFIX=$(brew --prefix)
 
           # 1. Install dependencies into isolated site-packages workspace
-          $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" pygobject zope.interface
+          # Force pip to build zope.interface from source using your CFLAGS/LDFLAGS
+          ARCHFLAGS="-arch arm64 -arch x86_64" $PYTHON_FRAMEWORK -m pip install \
+            --target="$SYS_SITEPACKAGES" \
+            --no-binary zope.interface \
+            pygobject zope.interface
+
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
           # 2. Convert zope into a standard importable package for PyInstaller
