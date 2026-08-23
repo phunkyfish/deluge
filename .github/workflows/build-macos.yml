@@ -199,9 +199,32 @@ jobs:
 
           # Synthesize a clean local bootstrap entrypoint script
           cat <<'EOF' > run_deluge.py
+          import sys
+          import types
+
+          # --------------------------------------------------------------------
+          # Compatibility Shim for Setuptools >= 70.0.0 & PyInstaller
+          # --------------------------------------------------------------------
+          try:
+              import pkg_resources
+
+              # If setuptools removed NullProvider, inject a fallback stub
+              if not hasattr(pkg_resources, 'NullProvider'):
+                  class DummyNullProvider:
+                      def __init__(self, module):
+                          self.module = module
+                  pkg_resources.NullProvider = DummyNullProvider
+
+              if not hasattr(pkg_resources, 'register_loader_type'):
+                  pkg_resources.register_loader_type = lambda loader, provider: None
+
+          except ImportError:
+              pass
+          # --------------------------------------------------------------------
+
+          # Now proceed with standard imports
           import builtins
           import gettext
-          import sys
 
           # 1. Setup gettext translation domain
           try:
