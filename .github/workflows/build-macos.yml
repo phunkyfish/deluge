@@ -294,26 +294,19 @@ jobs:
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
           # ====================================================================
           echo "Injecting mandatory GTK runtime assets to protect standalone execution..."
-          APP_RESOURCES="dist/Deluge.app/Contents/Resources"
 
-          LOCAL_BREW="/opt/homebrew"
-          if [ ! -d "$LOCAL_BREW" ]; then
-            LOCAL_BREW="/usr/local"
-          fi
+          HB_PREFIX=$(brew --prefix)
 
+          # 1. Bundle and compile GLib GSettings Schemas (Prevents FileChooser Crashes)
           mkdir -p "$APP_RESOURCES/glib-2.0/schemas"
+          cp -f "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
+          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas"
 
-          # FIXED TARGETED SCHEMA CAPTURE: Explicitly pull raw XML definitions out of the glib share directories
-          cp -r ${LOCAL_BREW}/share/glib-2.0/schemas/* "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
-          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas" 2>/dev/null || true
-
+          # 2. Bundle UI Icon Themes (Prevents Blank GTK Widgets)
           mkdir -p "$APP_RESOURCES/share/icons/Adwaita"
           mkdir -p "$APP_RESOURCES/share/icons/hicolor"
-          cp -r ${LOCAL_BREW}/share/icons/Adwaita/* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
-          cp -r ${LOCAL_BREW}/share/icons/hicolor/* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
-
-          mkdir -p "$APP_RESOURCES/gi_typelibs"
-          cp -r ${LOCAL_BREW}/lib/girepository-1.0/* "$APP_RESOURCES/gi_typelibs/" 2>/dev/null || true
+          cp -r "$HB_PREFIX/share/icons/Adwaita/"* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
+          cp -r "$HB_PREFIX/share/icons/hicolor/"* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
 
           # ====================================================================
           # CLEAN IDENTIFICATION REWRITING PASS (FIXED)
