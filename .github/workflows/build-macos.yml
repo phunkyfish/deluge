@@ -198,20 +198,32 @@ jobs:
           rm -rf build/ dist/ *.spec run_deluge.py 2>/dev/null || true
 
           # Synthesize a clean local bootstrap entrypoint script
-          echo "from deluge.ui.gtk3.gtkui import GtkUI" > run_deluge.py
-          echo "import sys" >> run_deluge.py
-          echo "import builtins" >> run_deluge.py
-          echo "import gettext" >> run_deluge.py
-          echo "" >> run_deluge.py
-          echo "# Ensure _ is globally accessible before Deluge modules load" >> run_deluge.py
-          echo "gettext.install('deluge')" >> run_deluge.py
-          echo "if '_' not in builtins.__dict__:" >> run_deluge.py
-          echo "    builtins.__dict__['_'] = gettext.gettext" >> run_deluge.py
-          echo "def start():" >> run_deluge.py
-          echo "    ui = GtkUI()" >> run_deluge.py
-          echo "    ui.start()" >> run_deluge.py
-          echo "if __name__ == '__main__':" >> run_deluge.py
-          echo "    start()" >> run_deluge.py
+          cat <<'EOF' > run_deluge.py
+          import builtins
+          import gettext
+          import sys
+
+          # 1. Setup gettext translation domain
+          try:
+            trans = gettext.translation('deluge', fallback=True)
+            builtins._ = trans.gettext
+          except Exception:
+            builtins._ = lambda msg: msg
+
+          # 2. Ensure builtins fallback is unconditionally available
+          if '_' not in builtins.__dict__:
+            builtins.__dict__['_'] = lambda msg: msg
+
+          # NOW import Deluge modules safely
+          from deluge.ui.gtk3.gtkui import GtkUI
+
+          def start():
+              ui = GtkUI()
+              ui.start()
+
+          if __name__ == '__main__':
+              start()
+          EOF
 
           # Extract explicit system paths out of the active Python.org framework
           SYS_SITEPACKAGES="/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages"
@@ -336,20 +348,19 @@ jobs:
           cp -fv "$GLIB_LIB"/libgobject*.dylib "$APP_FRAMEWORKS/"
           cp -fv "$GDK_PIXBUF_LIB"/libgdk_pixbuf*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # Clean up physical duplicates and enforce light relative symlinks
+          # Fix physical duplicates across ALL GTK, GIO, and GLib libraries
           cd "$APP_FRAMEWORKS"
 
-          for lib in libgtk-3.*.dylib libgdk-3.*.dylib libgio-2.0.*.dylib libglib-2.0.*.dylib libgobject-2.0.*.dylib libpango-1.0.*.dylib; do
+          for lib in libgtk-3.*.dylib libgdk-3.*.dylib libgio-2.0.*.dylib libglib-2.0.*.dylib libgobject-2.0.*.dylib libpango-1.0.*.dylib libcairo.*.dylib; do
             [ -f "$lib" ] || continue
 
-            # Determine unversioned alias (e.g. libgtk-3.dylib)
+            # Determine base alias (e.g. libgio-2.0.dylib)
             base=$(echo "$lib" | sed -E 's/\.[0-9]+(\.[0-9]+)*\.dylib$/.dylib/')
 
-            # If the alias is a physical file (not a symlink), replace it with a relative symlink
             if [ "$lib" != "$base" ]; then
               rm -f "$base"
               ln -sf "$lib" "$base"
-              echo "Symlinked $base -> $lib"
+              echo "Converted alias to relative symlink: $base -> $lib"
             fi
           done
 
