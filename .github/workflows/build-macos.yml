@@ -290,7 +290,6 @@ jobs:
             "${BINARIES_ARG[@]}" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
-            --exclude-module=pkg_resources \
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
@@ -308,6 +307,8 @@ jobs:
             --hidden-import=zope \
             --hidden-import=zope.interface \
             --hidden-import=libtorrent \
+            --hidden-import=pkg_resources \
+            --hidden-import=setuptools \
             --add-data "$SYS_SITEPACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$ZOPE_DIR:zope" \
             --add-data "$GI_DIR:gi" \
