@@ -233,11 +233,27 @@ jobs:
           GI_DIR="$SYS_SITEPACKAGES/gi"
           export PYTHONPATH="$SYS_SITEPACKAGES:$PYTHONPATH"
 
-          # Collect all dylibs from the Homebrew GTK3 stack explicitly
+          # Collect GTK3, Pango, GDK, Cairo, and GLib dylibs directly from Brew paths
           BINARIES_ARG=()
-          for lib in "$HB_PREFIX"/lib/lib{glib,gobject,gio,gmodule,gthread,gtk-3,gdk-3,pango,pangocairo,pangoft2,cairo,harfbuzz,fontconfig,freetype,atk,epoxy,gdk_pixbuf,ffi,intl,pixman}*.dylib; do
-            if [ -f "$lib" ]; then
-              BINARIES_ARG+=(--add-binary "$lib:.")
+
+          # Target specific Homebrew cellar paths to prevent missing symlinked dylibs
+          SEARCH_PATHS=(
+            "$HB_PREFIX/lib"
+            "$HB_PREFIX/opt/pango/lib"
+            "$HB_PREFIX/opt/gtk+3/lib"
+            "$HB_PREFIX/opt/cairo/lib"
+            "$HB_PREFIX/opt/glib/lib"
+            "$HB_PREFIX/opt/harfbuzz/lib"
+            "$HB_PREFIX/opt/gdk-pixbuf/lib"
+          )
+
+          for search_dir in "${SEARCH_PATHS[@]}"; do
+            if [ -d "$search_dir" ]; then
+              for lib in "$search_dir"/lib*.dylib; do
+                if [ -f "$lib" ] || [ -L "$lib" ]; then
+                  BINARIES_ARG+=(--add-binary "$lib:.")
+                fi
+              done
             fi
           done
 
@@ -287,21 +303,19 @@ jobs:
 
           echo "Explicitly harvesting GTK3 & Pango ecosystem dylibs from Homebrew..."
 
-          # Force-copy all Pango, Cairo, GTK, GDK, GLib and support dylibs
-          cp -f "$HB_PREFIX"/lib/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libgtk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libgdk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libglib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libgio*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libgobject*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libgmodule*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libharfbuzz*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libfontconfig*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libfreetype*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libatk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libepoxy*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$HB_PREFIX"/lib/libfribidi*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          # Resolve cellular or opt locations explicitly
+          PANGO_LIB=$(brew --prefix pango 2>/dev/null)/lib
+          GTK_LIB=$(brew --prefix gtk+3 2>/dev/null)/lib
+          CAIRO_LIB=$(brew --prefix cairo 2>/dev/null)/lib
+          GLIB_LIB=$(brew --prefix glib 2>/dev/null)/lib
+
+          cp -f "$PANGO_LIB"/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$GTK_LIB"/libgtk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$GTK_LIB"/libgdk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$CAIRO_LIB"/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$GLIB_LIB"/libglib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$GLIB_LIB"/libgio*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$GLIB_LIB"/libgobject*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
           # Create unversioned/versioned alias symlinks for ALL GTK/GLib libraries
           cd "$APP_FRAMEWORKS"
@@ -309,7 +323,6 @@ jobs:
             if [ -e "$f" ]; then
               base_name=$(echo "$f" | sed -E 's/\.dylib$//')
 
-              # If library is named like libfoo-1.0.dylib, ensure libfoo-1.0.0.dylib exists
               if [[ "$base_name" =~ -[0-9]+\.[0-9]+$ ]]; then
                 target_alias="${base_name}.0.dylib"
                 if [ ! -e "$target_alias" ]; then
@@ -317,7 +330,6 @@ jobs:
                 fi
               fi
 
-              # If library is named like libfoo-3.dylib, ensure libfoo-3.0.0.dylib exists
               if [[ "$base_name" =~ -[0-9]+$ ]]; then
                 target_alias="${base_name}.0.0.dylib"
                 if [ ! -e "$target_alias" ]; then
@@ -327,6 +339,7 @@ jobs:
             fi
           done
           cd - > /dev/null
+
 
           # Set LC_RPATH on the main executable and all dylibs
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
