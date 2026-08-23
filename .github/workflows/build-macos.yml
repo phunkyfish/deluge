@@ -301,45 +301,41 @@ jobs:
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
           HB_PREFIX=$(brew --prefix)
 
-          echo "Explicitly harvesting GTK3 & Pango ecosystem dylibs from Homebrew..."
+          echo "Explicitly bundling Pango, GTK+3, and dependencies..."
 
-          # Resolve cellular or opt locations explicitly
-          PANGO_LIB=$(brew --prefix pango 2>/dev/null)/lib
-          GTK_LIB=$(brew --prefix gtk+3 2>/dev/null)/lib
-          CAIRO_LIB=$(brew --prefix cairo 2>/dev/null)/lib
-          GLIB_LIB=$(brew --prefix glib 2>/dev/null)/lib
+          echo "Injected frameworks directory: $APP_FRAMEWORKS"
+          echo "Homebrew prefix detected: $HB_PREFIX"
 
-          cp -f "$PANGO_LIB"/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$GTK_LIB"/libgtk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$GTK_LIB"/libgdk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$CAIRO_LIB"/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$GLIB_LIB"/libglib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$GLIB_LIB"/libgio*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -f "$GLIB_LIB"/libgobject*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          # Resolve Homebrew paths safely
+          PANGO_LIB="${HB_PREFIX}/opt/pango/lib"
+          GTK_LIB="${HB_PREFIX}/opt/gtk+3/lib"
+          CAIRO_LIB="${HB_PREFIX}/opt/cairo/lib"
+          GLIB_LIB="${HB_PREFIX}/opt/glib/lib"
+          GDK_PIXBUF_LIB="${HB_PREFIX}/opt/gdk-pixbuf/lib"
+
+          # Copy files directly with explicit checks
+          echo "Copying GTK+3 and Pango libraries..."
+          cp -fv "$GTK_LIB"/libgtk-3*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$GTK_LIB"/libgdk-3*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$PANGO_LIB"/libpango*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$CAIRO_LIB"/libcairo*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$GLIB_LIB"/libglib*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$GLIB_LIB"/libgio*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$GLIB_LIB"/libgobject*.dylib "$APP_FRAMEWORKS/"
+          cp -fv "$GDK_PIXBUF_LIB"/libgdk_pixbuf*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
           # Create unversioned/versioned alias symlinks for ALL GTK/GLib libraries
           cd "$APP_FRAMEWORKS"
-          for f in *.dylib; do
-            if [ -e "$f" ]; then
-              base_name=$(echo "$f" | sed -E 's/\.dylib$//')
+          for lib in libgtk-3*.dylib libgdk-3*.dylib libpango*.dylib; do
+            [ -f "$lib" ] || continue
 
-              if [[ "$base_name" =~ -[0-9]+\.[0-9]+$ ]]; then
-                target_alias="${base_name}.0.dylib"
-                if [ ! -e "$target_alias" ]; then
-                  ln -s "$f" "$target_alias" 2>/dev/null || true
-                fi
-              fi
-
-              if [[ "$base_name" =~ -[0-9]+$ ]]; then
-                target_alias="${base_name}.0.0.dylib"
-                if [ ! -e "$target_alias" ]; then
-                  ln -s "$f" "$target_alias" 2>/dev/null || true
-                fi
-              fi
+            # Ensure base unversioned symlinks exist
+            base=$(echo "$lib" | sed -E 's/\.[0-9]+(\.[0-9]+)*\.dylib$/.dylib/')
+            if [ ! -e "$base" ]; then
+              ln -s "$lib" "$base"
             fi
           done
           cd - > /dev/null
-
 
           # Set LC_RPATH on the main executable and all dylibs
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
@@ -370,7 +366,16 @@ jobs:
           HB_PREFIX=$(brew --prefix)
 
           # 1. Bundle and compile GLib GSettings Schemas (Prevents FileChooser Crashes)
-          mkdir -p "$APP_RESOURCES/glib-2.0/schemas"
+          mkdir -p "$APP_RESOURCES/girepository-1.0"
+          mkdir -p "$APP_RESOURCES/share/glib-2.0/schemas"
+
+          # Copy GIR Typelibs required by PyGObject
+          cp -f $(brew --prefix)/lib/girepository-1.0/Gtk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -f $(brew --prefix)/lib/girepository-1.0/Gdk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -f $(brew --prefix)/lib/girepository-1.0/Pango-1.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -f $(brew --prefix)/lib/girepository-1.0/GdkPixbuf-2.0.typelib "$APP_RESOURCES/girepository-1.0/"
+
+          # Copy GLib Schemas to prevent GTK settings crash on startup
           cp -f "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
           glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas"
 
