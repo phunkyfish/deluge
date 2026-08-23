@@ -212,17 +212,26 @@ jobs:
           PYTHON_FRAMEWORK="/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
           HB_PREFIX=$(brew --prefix)
 
-          # 1. Install dependencies
+          # 1. Install dependencies into isolated site-packages workspace
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" pygobject zope.interface
           $PYTHON_FRAMEWORK -m pip install --target="$SYS_SITEPACKAGES" --upgrade --no-deps .
 
-          # 2. Inject zope __init__.py
+          # 2. Convert zope into a standard importable package for PyInstaller
           ZOPE_DIR="$SYS_SITEPACKAGES/zope"
           mkdir -p "$ZOPE_DIR"
           touch "$ZOPE_DIR/__init__.py"
 
+          # 3. Register site-packages location for spec generation
           GI_DIR="$SYS_SITEPACKAGES/gi"
           export PYTHONPATH="$SYS_SITEPACKAGES:$PYTHONPATH"
+
+          # Collect all dylibs from the Homebrew GTK3 stack explicitly
+          BINARIES_ARG=()
+          for lib in "$HB_PREFIX"/lib/lib{glib,gobject,gio,gmodule,gthread,gtk-3,gdk-3,pango,pangocairo,pangoft2,cairo,harfbuzz,fontconfig,freetype,atk,epoxy,gdk_pixbuf,ffi,intl,pixman}*.dylib; do
+            if [ -f "$lib" ]; then
+              BINARIES_ARG+=(--add-binary "$lib:.")
+            fi
+          done
 
           # 3. Generate spec file collecting GI binaries & typelibs
           pyi-makespec --onedir --windowed --name="Deluge" \
@@ -230,6 +239,7 @@ jobs:
             --target-architecture=universal2 \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
             --paths="$SYS_SITEPACKAGES" \
+            "${BINARIES_ARG[@]}" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=setuptools \
@@ -244,6 +254,8 @@ jobs:
             --hidden-import=gi.repository.GLib \
             --hidden-import=gi.repository.GObject \
             --hidden-import=gi.repository.Gio \
+            --hidden-import=gi.repository.Pango \
+            --hidden-import=gi.repository.cairo \
             --hidden-import=deluge.ui.gtk3.gtkui \
             --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=zope \
@@ -260,31 +272,49 @@ jobs:
           # 1. Build app bundle with pyinstaller
           pyinstaller --clean Deluge.spec
 
-          # 2. POST-BUILD REPAIR: Collect GTK3 stack binaries and fix rpaths
+          # Post-build repair
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
           HB_PREFIX=$(brew --prefix)
 
-          echo "Targeting GTK3 / Pango / Cairo / GLib ecosystem libraries..."
-          GTK_PACKAGES=(
-            "glib" "gobject-introspection" "gtk+3" "pango"
-            "cairo" "harfbuzz" "fontconfig" "freetype"
-            "atk" "gdk-pixbuf" "libepoxy" "libffi" "gettext" "pixman"
-          )
+          echo "Ensuring all Pango/GTK dylibs and symlinks are in Frameworks..."
+          cp -f "$HB_PREFIX"/lib/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libgtk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libgdk*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libglib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libgio*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -f "$HB_PREFIX"/lib/libgobject*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          for pkg in "${GTK_PACKAGES[@]}"; do
-            if [ -d "$HB_PREFIX/opt/$pkg/lib" ]; then
-              cp -f "$HB_PREFIX/opt/$pkg/lib"/*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          # Create unversioned/versioned alias symlinks for ALL GTK/GLib libraries
+          cd "$APP_FRAMEWORKS"
+          for f in *.dylib; do
+            if [ -f "$f" ] && [ ! -L "$f" ]; then
+              # Example: libgio-2.0.dylib -> libgio-2.0.0.dylib
+              base_name=$(echo "$f" | sed -E 's/\.dylib$//')
+
+              # If library is named like libfoo-1.0.dylib, ensure libfoo-1.0.0.dylib exists
+              if [[ "$base_name" =~ -[0-9]+\.[0-9]+$ ]]; then
+                target_alias="${base_name}.0.dylib"
+                if [ ! -e "$target_alias" ]; then
+                  ln -s "$f" "$target_alias"
+                fi
+              fi
+
+              # If library is named like libfoo-3.dylib, ensure libfoo-3.0.0.dylib exists
+              if [[ "$base_name" =~ -[0-9]+$ ]]; then
+                target_alias="${base_name}.0.0.dylib"
+                if [ ! -e "$target_alias" ]; then
+                  ln -s "$f" "$target_alias"
+                fi
+              fi
             fi
           done
+          cd - > /dev/null
 
-          # Fallback copy for flat lib directory matches
-          cp -f $HB_PREFIX/lib/lib{glib,gobject,gio,gmodule,gthread,gtk,gdk,pango,cairo,harfbuzz,fontconfig,freetype,atk,epoxy,gdk_pixbuf,ffi,intl,pixman}*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-
-          echo "Configuring executable LC_RPATH..."
+          # Set LC_RPATH on the main executable and all dylibs
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
 
-          echo "Relinking dynamic dependencies..."
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
             install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
             install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary" 2>/dev/null || true
