@@ -51,6 +51,11 @@ jobs:
         run: |
           brew install --formula dylibbundler create-dmg libtorrent-rasterbar
 
+      - name: Install macOS Build Dependencies
+        run: |
+          brew update
+          brew install gtk+3 pango cairo glib gdk-pixbuf adwaita-icon-theme
+
       - name: Import Apple Developer Certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
