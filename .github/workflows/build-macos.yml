@@ -158,16 +158,29 @@ jobs:
           import os
           import sys
 
+          # Resolve bundle paths
           bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
+          # In macOS .app bundles, Frameworks and Resources sit alongside MacOS directory
           frameworks_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Frameworks'))
+          resources_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Resources'))
 
           if not os.path.exists(frameworks_dir):
               frameworks_dir = bundle_dir
+          if not os.path.exists(resources_dir):
+              resources_dir = bundle_dir
 
-          # Set library fallbacks for dyld/dlopen
+          # 1. Dynamic Linker & GObject Typelib Paths
           os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
           os.environ['DYLD_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
-          os.environ['GI_TYPELIB_PATH'] = f"{bundle_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
+          os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{bundle_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
+
+          # 2. GTK Assets, Schemas & Icon Themes
+          os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(resources_dir, 'glib-2.0', 'schemas')
+          os.environ['XDG_DATA_DIRS'] = f"{resources_dir}:{os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')}"
+
+          # Prevent GDK from attempting to access host display defaults incorrectly
+          os.environ['GDK_PIXBUF_MODULE_FILE'] = os.path.join(resources_dir, 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')
           EOF
 
           # ====================================================================
