@@ -158,16 +158,15 @@ jobs:
           import os
           import sys
 
-          # Resolve bundle paths
           bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
           frameworks_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Frameworks'))
 
           if not os.path.exists(frameworks_dir):
               frameworks_dir = bundle_dir
 
-          # Force dyld and GI to look inside Frameworks
+          # Set library fallbacks for dyld/dlopen
+          os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
           os.environ['DYLD_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
-          os.environ['DYLD_FRAMEWORK_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_FRAMEWORK_PATH', '')}"
           os.environ['GI_TYPELIB_PATH'] = f"{bundle_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
           EOF
 
@@ -245,29 +244,38 @@ jobs:
             run_deluge.py
 
           # 4. Build app bundle
-          # 1. Build app bundle
+          # 1. Build app bundle with pyinstaller
           pyinstaller --clean Deluge.spec
 
-          # 2. POST-BUILD REPAIR: Bulk copy all Homebrew dynamic libraries into Frameworks
+          # 2. POST-BUILD REPAIR: Collect GTK3 stack binaries and fix rpaths
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
           APP_MACOS="dist/Deluge.app/Contents/MacOS"
           HB_PREFIX=$(brew --prefix)
 
-          echo "Copying targeted GTK3 stack libraries..."
-          # Targeted GTK3/Pango/Cairo/GDK ecosystem dylibs
-          for pkg in glib gobject gio gmodule gthread gtk-3 gdk-3 pango pangocairo pangoft2 cairo cairo-gobject harfbuzz fontconfig freetype atk epoxy gdk_pixbuf-2.0 ffi png16 intl pixman-1; do
-            cp -f $HB_PREFIX/lib/lib${pkg}*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          echo "Targeting GTK3 / Pango / Cairo / GLib ecosystem libraries..."
+          GTK_PACKAGES=(
+            "glib" "gobject-introspection" "gtk+3" "pango"
+            "cairo" "harfbuzz" "fontconfig" "freetype"
+            "atk" "gdk-pixbuf" "libepoxy" "libffi" "gettext" "pixman"
+          )
+
+          for pkg in "${GTK_PACKAGES[@]}"; do
+            if [ -d "$HB_PREFIX/opt/$pkg/lib" ]; then
+              cp -f "$HB_PREFIX/opt/$pkg/lib"/*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+            fi
           done
 
-          echo "Setting rpaths and re-linking all dynamic binaries..."
+          # Fallback copy for flat lib directory matches
+          cp -f $HB_PREFIX/lib/lib{glib,gobject,gio,gmodule,gthread,gtk,gdk,pango,cairo,harfbuzz,fontconfig,freetype,atk,epoxy,gdk_pixbuf,ffi,intl,pixman}*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+
+          echo "Configuring executable LC_RPATH..."
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/Deluge" 2>/dev/null || true
 
-          # Iterate over every binary inside Frameworks to rewrite paths to @rpath
+          echo "Relinking dynamic dependencies..."
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) | while read -r binary; do
             install_name_tool -add_rpath "@loader_path" "$binary" 2>/dev/null || true
             install_name_tool -add_rpath "@executable_path/../Frameworks" "$binary" 2>/dev/null || true
 
-            # Relink any remaining /opt/homebrew hardcoded references
             otool -L "$binary" | grep "/opt/homebrew" | awk '{print $1}' | while read -r dep; do
               dep_name=$(basename "$dep")
               install_name_tool -change "$dep" "@rpath/$dep_name" "$binary" 2>/dev/null || true
