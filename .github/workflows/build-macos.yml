@@ -290,7 +290,6 @@ jobs:
             "${BINARIES_ARG[@]}" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
-            --exclude-module=setuptools \
             --exclude-module=pkg_resources \
             --collect-all gi \
             --collect-all deluge \
