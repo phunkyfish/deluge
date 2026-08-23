@@ -366,29 +366,34 @@ jobs:
           # ====================================================================
           # INJECT GTK3 THEMES, ASSETS, AND CORE GLIB SYSTEM SCHEMAS
           # ====================================================================
-          echo "Injecting mandatory GTK runtime assets to protect standalone execution..."
+          echo "Injecting mandatory GTK runtime assets..."
 
           HB_PREFIX=$(brew --prefix)
+          APP_RESOURCES="dist/Deluge.app/Contents/Resources"
 
-          # 1. Bundle and compile GLib GSettings Schemas (Prevents FileChooser Crashes)
+          # 1. Setup Required Directory Structure
           mkdir -p "$APP_RESOURCES/girepository-1.0"
           mkdir -p "$APP_RESOURCES/share/glib-2.0/schemas"
+          mkdir -p "$APP_RESOURCES/share/icons"
 
-          # Copy GIR Typelibs required by PyGObject
-          cp -f $(brew --prefix)/lib/girepository-1.0/Gtk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
-          cp -f $(brew --prefix)/lib/girepository-1.0/Gdk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
-          cp -f $(brew --prefix)/lib/girepository-1.0/Pango-1.0.typelib "$APP_RESOURCES/girepository-1.0/"
-          cp -f $(brew --prefix)/lib/girepository-1.0/GdkPixbuf-2.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          # 2. Copy GIR Typelibs
+          cp -fv "$HB_PREFIX"/lib/girepository-1.0/Gtk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -fv "$HB_PREFIX"/lib/girepository-1.0/Gdk-3.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -fv "$HB_PREFIX"/lib/girepository-1.0/Pango-1.0.typelib "$APP_RESOURCES/girepository-1.0/"
+          cp -fv "$HB_PREFIX"/lib/girepository-1.0/GdkPixbuf-2.0.typelib "$APP_RESOURCES/girepository-1.0/"
 
-          # Copy GLib Schemas to prevent GTK settings crash on startup
-          cp -f "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/glib-2.0/schemas/" 2>/dev/null || true
-          glib-compile-schemas "$APP_RESOURCES/glib-2.0/schemas"
+          # 3. Copy and Compile GLib Schemas (Fixed Path)
+          cp -fv "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
+          glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # 2. Bundle UI Icon Themes (Prevents Blank GTK Widgets)
-          mkdir -p "$APP_RESOURCES/share/icons/Adwaita"
-          mkdir -p "$APP_RESOURCES/share/icons/hicolor"
-          cp -r "$HB_PREFIX/share/icons/Adwaita/"* "$APP_RESOURCES/share/icons/Adwaita/" 2>/dev/null || true
-          cp -r "$HB_PREFIX/share/icons/hicolor/"* "$APP_RESOURCES/share/icons/hicolor/" 2>/dev/null || true
+          # 4. Copy Icon Themes (Clean Directory Sync)
+          if [ -d "$HB_PREFIX/share/icons/Adwaita" ]; then
+            cp -R "$HB_PREFIX/share/icons/Adwaita" "$APP_RESOURCES/share/icons/"
+          fi
+
+          if [ -d "$HB_PREFIX/share/icons/hicolor" ]; then
+            cp -R "$HB_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+          fi
 
           # ====================================================================
           # CLEAN IDENTIFICATION REWRITING PASS (FIXED)
