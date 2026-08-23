@@ -200,6 +200,13 @@ jobs:
           # Synthesize a clean local bootstrap entrypoint script
           echo "from deluge.ui.gtk3.gtkui import GtkUI" > run_deluge.py
           echo "import sys" >> run_deluge.py
+          echo "import builtins" >> run_deluge.py
+          echo "import gettext" >> run_deluge.py
+          echo "" >> run_deluge.py
+          echo "# Ensure _ is globally accessible before Deluge modules load" >> run_deluge.py
+          echo "gettext.install('deluge')" >> run_deluge.py
+          echo "if '_' not in builtins.__dict__:" >> run_deluge.py
+          echo "    builtins.__dict__['_'] = gettext.gettext" >> run_deluge.py
           echo "def start():" >> run_deluge.py
           echo "    ui = GtkUI()" >> run_deluge.py
           echo "    ui.start()" >> run_deluge.py
@@ -329,17 +336,23 @@ jobs:
           cp -fv "$GLIB_LIB"/libgobject*.dylib "$APP_FRAMEWORKS/"
           cp -fv "$GDK_PIXBUF_LIB"/libgdk_pixbuf*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # Create unversioned/versioned alias symlinks for ALL GTK/GLib libraries
+          # Clean up physical duplicates and enforce light relative symlinks
           cd "$APP_FRAMEWORKS"
-          for lib in libgtk-3*.dylib libgdk-3*.dylib libpango*.dylib; do
+
+          for lib in libgtk-3.*.dylib libgdk-3.*.dylib libgio-2.0.*.dylib libglib-2.0.*.dylib libgobject-2.0.*.dylib libpango-1.0.*.dylib; do
             [ -f "$lib" ] || continue
 
-            # Ensure base unversioned symlinks exist
+            # Determine unversioned alias (e.g. libgtk-3.dylib)
             base=$(echo "$lib" | sed -E 's/\.[0-9]+(\.[0-9]+)*\.dylib$/.dylib/')
-            if [ ! -e "$base" ]; then
-              ln -s "$lib" "$base"
+
+            # If the alias is a physical file (not a symlink), replace it with a relative symlink
+            if [ "$lib" != "$base" ]; then
+              rm -f "$base"
+              ln -sf "$lib" "$base"
+              echo "Symlinked $base -> $lib"
             fi
           done
+
           cd - > /dev/null
 
           # Set LC_RPATH on the main executable and all dylibs
