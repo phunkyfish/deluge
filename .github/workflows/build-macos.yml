@@ -327,62 +327,58 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Clean out non-binary files & pycache that violate bundle guidelines
-          find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
-          find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
+          # 1. Purge non-binary metadata files that break bundle checks
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Neutralize framework detection by moving the Python binary out of the nested structure
-          PY_FRAMEWORK="$FINAL_APP/Contents/Frameworks/Python.framework"
-
-          if [ -d "$PY_FRAMEWORK" ]; then
-            echo "=== Flattening Python binary layout to disable bundle checks ==="
-
-            # Locate the actual Mach-O Python binary inside the framework structure
-            PY_BIN=$(find "$PY_FRAMEWORK" -name "Python" -type f | head -n 1)
+          # 2. Flatten ALL Python.framework instances in Frameworks and Resources
+          find "$FINAL_APP" -type d -name "Python.framework" | while read -r py_fw; do
+            echo "=== Neutralizing Python.framework at: $py_fw ==="
+            PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
 
             if [ -n "$PY_BIN" ]; then
-              # Move the binary out to the root Frameworks folder under a neutral name
-              mv "$PY_BIN" "$FINAL_APP/Contents/Frameworks/libpython3.11.dylib"
+              TARGET_DIR=$(dirname "$py_fw")
+              LIB_NAME="libpython_runtime_$(date +%s%N).dylib"
 
-              # Symlink it back to its original location so PyInstaller's runtime launcher finds it
-              ln -s "$FINAL_APP/Contents/Frameworks/libpython3.11.dylib" "$PY_BIN"
+              # Move the nested binary out to its parent directory as a plain .dylib
+              mv "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
+
+              # Symlink back so runtime loading still resolves
+              ln -s "$TARGET_DIR/$LIB_NAME" "$PY_BIN"
             fi
-          fi
+          done
 
-          # 3. Sign all Mach-O binaries in Frameworks as individual flat files
-          # (Using -L to follow symlinks safely or skipping symlinks)
-          find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
+          # 3. Sign all Mach-O binaries in Frameworks, Resources, and MacOS (skipping symlinks)
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f | while read -r file; do
+            # Skip the main executable for now (signed with entitlements in step 4)
+            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
+              continue
+            fi
+
+            # Skip symbolic links
             if [ -L "$file" ]; then
-              continue # Skip symlinks to avoid duplicate signing errors
+              continue
             fi
 
             if file "$file" | grep -q "Mach-O"; then
-              echo "Signing binary: $file"
+              echo "=== Signing Mach-O Binary: $file ==="
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
             fi
           done
 
-          # 4. Sign auxiliary binaries in Resources or MacOS
-          find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f | while read -r file; do
-            if file "$file" | grep -q "Mach-O" && [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
-              codesign --force --options runtime --timestamp \
-                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "$file"
-            fi
-          done
-
-          # 5. Sign the main Deluge executable
+          # 4. Sign main Deluge executable with entitlements
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Sign the top-level Outer Bundle
+          # 5. Sign top-level App Bundle
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 7. Strict Gatekeeper Verification
+          # 6. Gatekeeper Verification
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
       - name: Verify Architecture Slices
