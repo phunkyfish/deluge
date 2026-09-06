@@ -76,6 +76,10 @@ jobs:
           # Install deluge and remaining dependencies
           ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install .
 
+          # 1. Ensure PyGObject, PyCairo, and Deluge are fully installed in the build environment
+          python3 -m pip install pygobject pycairo
+          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation -e .
+
           # Extract libtorrent bindings from Homebrew
           BREW_PREFIX=$(brew --prefix)
           SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
@@ -180,22 +184,10 @@ jobs:
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=tkinter \
-            --exclude-module=matplotlib \
-            --exclude-module=scipy \
-            --exclude-module=numpy \
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
             --collect-all zope.interface \
-            --hidden-import=gi.repository.Gtk \
-            --hidden-import=gi.repository.Gdk \
-            --hidden-import=gi.repository.GLib \
-            --hidden-import=gi.repository.GObject \
-            --hidden-import=gi.repository.Gio \
-            --hidden-import=gi.repository.Pango \
-            --hidden-import=gi.repository.cairo \
-            --hidden-import=deluge.ui.gtk3.gtkui \
-            --hidden-import=deluge.ui.gtk3.main \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
