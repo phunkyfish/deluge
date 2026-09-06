@@ -46,7 +46,7 @@ jobs:
           HOMEBREW_NO_ANALYTICS: 1
         run: |
           brew update
-          brew install gtk+3 pango cairo glib gdk-pixbuf adwaita-icon-theme libtorrent-rasterbar
+          brew install gtk+3 pango cairo glib gdk-pixbuf adwaita-icon-theme libtorrent-rasterbar gobject-introspection
 
       - name: Build and Package Thin App
         run: |
@@ -177,6 +177,8 @@ jobs:
           # 2. Export dynamic library search paths so PyInstaller child processes can resolve GI typelibs
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$BREW_PREFIX/opt/gtk+3/lib:$BREW_PREFIX/opt/pango/lib:$BREW_PREFIX/opt/cairo/lib:$BREW_PREFIX/opt/glib/lib:$DYLD_LIBRARY_PATH"
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+
+          export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
           pyi-makespec --onedir --windowed --name="Deluge" \
