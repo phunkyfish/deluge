@@ -73,12 +73,11 @@ jobs:
           ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation .
           cd -
 
-          # Install deluge and remaining dependencies
-          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install .
-
           # 1. Ensure PyGObject, PyCairo, and Deluge are fully installed in the build environment
           python3 -m pip install pygobject pycairo
-          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation -e .
+
+          # Install deluge and remaining dependencies
+          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation .
 
           # Extract libtorrent bindings from Homebrew
           BREW_PREFIX=$(brew --prefix)
