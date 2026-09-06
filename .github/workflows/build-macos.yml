@@ -156,26 +156,19 @@ jobs:
               start()
           EOF
 
-          # Collect GTK3, Pango, GDK, Cairo, and GLib binaries
-          BINARIES_ARG=()
-          SEARCH_PATHS=(
-            "$BREW_PREFIX/lib"
-            "$BREW_PREFIX/opt/pango/lib"
-            "$BREW_PREFIX/opt/gtk+3/lib"
-            "$BREW_PREFIX/opt/cairo/lib"
-            "$BREW_PREFIX/opt/glib/lib"
-            "$BREW_PREFIX/opt/harfbuzz/lib"
-            "$BREW_PREFIX/opt/gdk-pixbuf/lib"
+          TARGET_LIBS=(
+            "libgtk-3" "libgdk-3" "libpango" "libcairo" "libglib-2.0"
+            "libgio-2.0" "libgobject-2.0" "libgdk_pixbuf" "libatk-1.0"
+            "libharfbuzz" "libepoxy" "libfribidi" "libintl" "libpng"
           )
 
-          for search_dir in "${SEARCH_PATHS[@]}"; do
-            if [ -d "$search_dir" ]; then
-              for lib in "$search_dir"/lib*.dylib; do
-                if [ -f "$lib" ] || [ -L "$lib" ]; then
-                  BINARIES_ARG+=(--add-binary "$lib:.")
-                fi
-              done
-            fi
+          BINARIES_ARG=()
+          for lib_prefix in "${TARGET_LIBS[@]}"; do
+            for matched_lib in "$HB_PREFIX"/lib/${lib_prefix}*.dylib "$HB_PREFIX"/opt/*/lib/${lib_prefix}*.dylib; do
+              if [ -f "$matched_lib" ]; then
+                BINARIES_ARG+=(--add-binary "$matched_lib:.")
+              fi
+            done
           done
 
           # 6. Generate spec file and compile thin app
@@ -186,6 +179,10 @@ jobs:
             "${BINARIES_ARG[@]}" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
+            --exclude-module=tkinter \
+            --exclude-module=matplotlib \
+            --exclude-module=scipy \
+            --exclude-module=numpy \
             --collect-all gi \
             --collect-all deluge \
             --collect-all twisted \
@@ -203,44 +200,31 @@ jobs:
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
-            --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
+            --add-data "$HB_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
           pyinstaller --clean Deluge.spec
 
-          # 7. Copy GTK/Pango Dynamic Libraries and Enforce Light Symlinks
-          APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
-          cp -fv "$BREW_PREFIX"/opt/gtk+3/lib/libgtk-3*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/gtk+3/lib/libgdk-3*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/pango/lib/libpango*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/cairo/lib/libcairo*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/glib/lib/libglib*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/glib/lib/libgio*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/glib/lib/libgobject*.dylib "$APP_FRAMEWORKS/"
-          cp -fv "$BREW_PREFIX"/opt/gdk-pixbuf/lib/libgdk_pixbuf*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-
-          cd "$APP_FRAMEWORKS"
-          for lib in libgtk-3.*.dylib libgdk-3.*.dylib libgio-2.0.*.dylib libglib-2.0.*.dylib libgobject-2.0.*.dylib libpango-1.0.*.dylib libcairo.*.dylib; do
-            [ -f "$lib" ] || continue
-            base=$(echo "$lib" | sed -E 's/\.[0-9]+(\.[0-9]+)*\.dylib$/.dylib/')
-            if [ "$lib" != "$base" ]; then
-              rm -f "$base"
-              ln -sf "$lib" "$base"
-            fi
-          done
-          cd - > /dev/null
-
-          # 8. Inject GTK Assets and Schemas
+          # 3. Inject minimal resources (skip heavy locale translations)
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/girepository-1.0" "$APP_RESOURCES/share/glib-2.0/schemas" "$APP_RESOURCES/share/icons"
 
-          cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
+          cp -fv "$HB_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
+          cp -fv "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          [ -d "$BREW_PREFIX/share/icons/Adwaita" ] && cp -R "$BREW_PREFIX/share/icons/Adwaita" "$APP_RESOURCES/share/icons/"
-          [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+          # Copy icon directories without SVG sources where possible
+          [ -d "$HB_PREFIX/share/icons/hicolor" ] && cp -R "$HB_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+
+          # 4. STRIP BINARIES (Major Size Reduction Step)
+          echo "=== Stripping Debug Symbols ==="
+          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" \) | while read -r bin; do
+            strip -x "$bin" 2>/dev/null || true
+          done
+
+          # 5. Clean unnecessary pyinstaller bloat inside app bundle
+          find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
