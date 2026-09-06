@@ -327,11 +327,25 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Purge non-binary metadata files that break bundle checks
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
+      - name: Sign Universal2 App Bundle
+        run: |
+          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
+
+          security set-keychain-settings -lut 7200 build.keychain
+          security unlock-keychain -p "temporary_actions_password" build.keychain
+
+          # 1. Relocate non-binary package assets out of Frameworks to Resources (fixes CSS/JS code object error)
+          mkdir -p "$FINAL_APP/Contents/Resources"
+          if [ -d "$FINAL_APP/Contents/Frameworks/deluge" ]; then
+            echo "=== Relocating deluge resources out of Frameworks ==="
+            mv "$FINAL_APP/Contents/Frameworks/deluge" "$FINAL_APP/Contents/Resources/"
+          fi
+
+          # 2. Purge non-binary metadata files that break bundle checks
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete 2>/dev/null || true
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Flatten ALL Python.framework instances in Frameworks and Resources
+          # 3. Flatten ALL Python.framework instances in Frameworks and Resources
           find "$FINAL_APP" -type d -name "Python.framework" | while read -r py_fw; do
             echo "=== Neutralizing Python.framework at: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
@@ -340,17 +354,14 @@ jobs:
               TARGET_DIR=$(dirname "$py_fw")
               LIB_NAME="libpython_runtime_$(date +%s%N).dylib"
 
-              # Move the nested binary out to its parent directory as a plain .dylib
               mv "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
-
-              # Symlink back so runtime loading still resolves
               ln -s "$TARGET_DIR/$LIB_NAME" "$PY_BIN"
             fi
           done
 
-          # 3. Sign all Mach-O binaries in Frameworks, Resources, and MacOS (skipping symlinks)
+          # 4. Sign ALL inner Mach-O binaries first (Frameworks, Resources, and nested MacOS binaries)
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f | while read -r file; do
-            # Skip the main executable for now (signed with entitlements in step 4)
+            # Skip the main binary for the final step
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               continue
             fi
@@ -368,17 +379,20 @@ jobs:
             fi
           done
 
-          # 4. Sign main Deluge executable with entitlements
+          # 5. Sign main Deluge executable with entitlements
+          echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Sign top-level App Bundle
-          codesign --force --options runtime --timestamp --entitlements entitlements.plist \
+          # 6. Deep-sign top-level App Bundle
+          echo "=== Signing Outer Application Bundle ==="
+          codesign --force --deep --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Gatekeeper Verification
+          # 7. Strict Gatekeeper Verification
+          echo "=== Verifying Signature ==="
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
       - name: Verify Architecture Slices
