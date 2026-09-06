@@ -164,7 +164,7 @@ jobs:
 
           BINARIES_ARG=()
           for lib_prefix in "${TARGET_LIBS[@]}"; do
-            for matched_lib in "$HB_PREFIX"/lib/${lib_prefix}*.dylib "$HB_PREFIX"/opt/*/lib/${lib_prefix}*.dylib; do
+            for matched_lib in "$BREW_PREFIX"/lib/${lib_prefix}*.dylib "$BREW_PREFIX"/opt/*/lib/${lib_prefix}*.dylib; do
               if [ -f "$matched_lib" ]; then
                 BINARIES_ARG+=(--add-binary "$matched_lib:.")
               fi
@@ -200,7 +200,7 @@ jobs:
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
-            --add-data "$HB_PREFIX/lib/girepository-1.0:gi_typelibs" \
+            --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
@@ -210,12 +210,12 @@ jobs:
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/girepository-1.0" "$APP_RESOURCES/share/glib-2.0/schemas" "$APP_RESOURCES/share/icons"
 
-          cp -fv "$HB_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
-          cp -fv "$HB_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
+          cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
           # Copy icon directories without SVG sources where possible
-          [ -d "$HB_PREFIX/share/icons/hicolor" ] && cp -R "$HB_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+          [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
 
           # 4. STRIP BINARIES (Major Size Reduction Step)
           echo "=== Stripping Debug Symbols ==="
@@ -329,19 +329,32 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Remove non-binary Python source/metadata files mistakenly placed in Frameworks
+          # 1. Clean out non-binary files & pycache that violate Framework structure
           find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
           find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Sign ONLY true Mach-O binaries (dylibs, .so extensions) inside Frameworks
+          # 2. Sign Python.framework explicitly as a framework bundle if present
+          if [ -d "$FINAL_APP/Contents/Frameworks/Python.framework" ]; then
+            echo "=== Signing nested Python.framework ==="
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
+              "$FINAL_APP/Contents/Frameworks/Python.framework"
+          fi
+
+          # 3. Sign remaining individual Mach-O binaries (.dylib / .so) inside Frameworks
           find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
+            # Skip files inside Python.framework as it was signed as a whole above
+            if [[ "$file" == *"Python.framework"* ]]; then
+              continue
+            fi
+
             if file "$file" | grep -q "Mach-O"; then
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "$file"
             fi
           done
 
-          # 3. Sign standalone executables if present in Frameworks/Resources
+          # 4. Sign auxiliary binaries in Resources or MacOS
           find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f | while read -r file; do
             if file "$file" | grep -q "Mach-O" && [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               codesign --force --options runtime --timestamp \
@@ -349,17 +362,17 @@ jobs:
             fi
           done
 
-          # 4. Sign the main app binary with entitlements
+          # 5. Sign the main Deluge binary
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Sign the top-level Outer Bundle
+          # 6. Sign the top-level Outer Bundle
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Verify strict signing compliance
+          # 7. Strict Gatekeeper Verification
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
       - name: Verify Architecture Slices
