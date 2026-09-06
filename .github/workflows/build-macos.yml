@@ -77,7 +77,7 @@ jobs:
           python3 -m pip install pygobject pycairo
 
           # Install deluge and remaining dependencies
-          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation .
+          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install .
 
           # Extract libtorrent bindings from Homebrew
           BREW_PREFIX=$(brew --prefix)
