@@ -334,31 +334,25 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Relocate all non-binary data directories out of Frameworks into Resources
+          # 1. Sweep and relocate ALL non-Mach-O assets/archives out of Frameworks into Resources
           mkdir -p "$FINAL_APP/Contents/Resources"
 
-          # Move/Merge deluge assets
-          if [ -d "$FINAL_APP/Contents/Frameworks/deluge" ]; then
-            echo "=== Merging deluge resources into Resources ==="
-            cp -R "$FINAL_APP/Contents/Frameworks/deluge/" "$FINAL_APP/Contents/Resources/deluge/"
-            rm -rf "$FINAL_APP/Contents/Frameworks/deluge"
-          fi
-
-          # Move gi_typelibs out of Frameworks into Resources
-          if [ -d "$FINAL_APP/Contents/Frameworks/gi_typelibs" ]; then
-            echo "=== Relocating gi_typelibs to Resources ==="
-            cp -R "$FINAL_APP/Contents/Frameworks/gi_typelibs/" "$FINAL_APP/Contents/Resources/gi_typelibs/"
-            rm -rf "$FINAL_APP/Contents/Frameworks/gi_typelibs"
-          fi
-
-          # Generic cleanup: Move ANY remaining non-dylib directories inside Frameworks to Resources
+          # Move all non-Mach-O directories (deluge, gi_typelibs, etc.)
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
             dirname=$(basename "$dir")
-            # Skip valid framework or engine paths handled in step 3
             if [[ "$dirname" != *"Python"* ]]; then
-              echo "=== Relocating stray resource directory: $dirname ==="
+              echo "=== Relocating resource directory: $dirname ==="
               cp -R "$dir/" "$FINAL_APP/Contents/Resources/$dirname/"
               rm -rf "$dir"
+            fi
+          done
+
+          # Move all non-Mach-O files (base_library.zip, .pyc, .zip, .dat, etc.)
+          find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f | while read -r file; do
+            if ! file "$file" | grep -q "Mach-O"; then
+              filename=$(basename "$file")
+              echo "=== Relocating non-Mach-O file: $filename ==="
+              mv "$file" "$FINAL_APP/Contents/Resources/$filename"
             fi
           done
 
