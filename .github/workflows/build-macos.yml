@@ -334,11 +334,13 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Relocate non-binary package assets out of Frameworks to Resources (fixes CSS/JS code object error)
+          # 1. Relocate and merge non-binary deluge assets out of Frameworks to Resources
           mkdir -p "$FINAL_APP/Contents/Resources"
           if [ -d "$FINAL_APP/Contents/Frameworks/deluge" ]; then
-            echo "=== Relocating deluge resources out of Frameworks ==="
-            mv "$FINAL_APP/Contents/Frameworks/deluge" "$FINAL_APP/Contents/Resources/"
+            echo "=== Merging deluge resources from Frameworks into Resources ==="
+            # Merge files into Resources/deluge without overwriting error
+            cp -R "$FINAL_APP/Contents/Frameworks/deluge/" "$FINAL_APP/Contents/Resources/deluge/"
+            rm -rf "$FINAL_APP/Contents/Frameworks/deluge"
           fi
 
           # 2. Purge non-binary metadata files that break bundle checks
