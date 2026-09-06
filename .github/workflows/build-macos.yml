@@ -325,17 +325,18 @@ jobs:
           find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
           find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Sign Python.framework explicitly as a framework bundle if present
-          if [ -d "$FINAL_APP/Contents/Frameworks/Python.framework" ]; then
-            echo "=== Signing nested Python.framework ==="
-            codesign --force --options runtime --timestamp \
-              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-              "$FINAL_APP/Contents/Frameworks/Python.framework"
-          fi
+          # 2. Sign Python binary files directly (avoiding folder bundle sign on Python.framework)
+          find "$FINAL_APP/Contents/Frameworks/Python.framework" -type f | while read -r pyfile; do
+            if file "$pyfile" | grep -q "Mach-O"; then
+              echo "=== Signing Python Framework Binary: $pyfile ==="
+              codesign --force --options runtime --timestamp \
+                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "$pyfile"
+            fi
+          done
 
           # 3. Sign remaining individual Mach-O binaries (.dylib / .so) inside Frameworks
           find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
-            # Skip files inside Python.framework as it was signed as a whole above
+            # Skip files inside Python.framework as they were handled in Step 2
             if [[ "$file" == *"Python.framework"* ]]; then
               continue
             fi
@@ -354,7 +355,7 @@ jobs:
             fi
           done
 
-          # 5. Sign the main Deluge binary
+          # 5. Sign the main Deluge executable
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
