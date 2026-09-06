@@ -334,14 +334,33 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Relocate and merge non-binary deluge assets out of Frameworks to Resources
+          # 1. Relocate all non-binary data directories out of Frameworks into Resources
           mkdir -p "$FINAL_APP/Contents/Resources"
+
+          # Move/Merge deluge assets
           if [ -d "$FINAL_APP/Contents/Frameworks/deluge" ]; then
-            echo "=== Merging deluge resources from Frameworks into Resources ==="
-            # Merge files into Resources/deluge without overwriting error
+            echo "=== Merging deluge resources into Resources ==="
             cp -R "$FINAL_APP/Contents/Frameworks/deluge/" "$FINAL_APP/Contents/Resources/deluge/"
             rm -rf "$FINAL_APP/Contents/Frameworks/deluge"
           fi
+
+          # Move gi_typelibs out of Frameworks into Resources
+          if [ -d "$FINAL_APP/Contents/Frameworks/gi_typelibs" ]; then
+            echo "=== Relocating gi_typelibs to Resources ==="
+            cp -R "$FINAL_APP/Contents/Frameworks/gi_typelibs/" "$FINAL_APP/Contents/Resources/gi_typelibs/"
+            rm -rf "$FINAL_APP/Contents/Frameworks/gi_typelibs"
+          fi
+
+          # Generic cleanup: Move ANY remaining non-dylib directories inside Frameworks to Resources
+          find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
+            dirname=$(basename "$dir")
+            # Skip valid framework or engine paths handled in step 3
+            if [[ "$dirname" != *"Python"* ]]; then
+              echo "=== Relocating stray resource directory: $dirname ==="
+              cp -R "$dir/" "$FINAL_APP/Contents/Resources/$dirname/"
+              rm -rf "$dir"
+            fi
+          done
 
           # 2. Purge non-binary metadata files that break bundle checks
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete 2>/dev/null || true
