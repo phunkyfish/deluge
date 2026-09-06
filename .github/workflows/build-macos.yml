@@ -327,27 +327,27 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Clean out non-binary files & pycache that violate Framework structure
+          # 1. Clean out non-binary files & pycache that violate bundle guidelines
           find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
           find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Sign Python framework binaries using RELATIVE paths to bypass path-based bundle checks
-          if [ -d "$FINAL_APP/Contents/Frameworks/Python.framework" ]; then
-            echo "=== Signing Python Framework Binaries via Relative Path ==="
+          # 2. Fix Python.framework ambiguity by making it a valid Apple Framework layout
+          PY_FRAMEWORK="$FINAL_APP/Contents/Frameworks/Python.framework"
+          if [ -d "$PY_FRAMEWORK" ]; then
+            echo "=== Normalizing Python.framework bundle layout ==="
 
-            # Navigate directly into the Python framework directory
-            pushd "$FINAL_APP/Contents/Frameworks/Python.framework" > /dev/null
+            # Ensure Versions/Current symlink exists
+            mkdir -p "$PY_FRAMEWORK/Versions"
+            if [ -d "$PY_FRAMEWORK/Versions/3.11" ]; then
+              ln -sfn "3.11" "$PY_FRAMEWORK/Versions/Current"
+              ln -sfn "Versions/Current/Python" "$PY_FRAMEWORK/Python" 2>/dev/null || true
+              [ -d "$PY_FRAMEWORK/Versions/Current/Resources" ] && ln -sfn "Versions/Current/Resources" "$PY_FRAMEWORK/Resources" 2>/dev/null || true
+            fi
 
-            find . -type f | while read -r pyfile; do
-              if file "$pyfile" | grep -q "Mach-O"; then
-                echo "Signing relative binary: $pyfile"
-                codesign --force --options runtime --timestamp \
-                  --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-                  --keychain build.keychain "$pyfile"
-              fi
-            done
-
-            popd > /dev/null
+            # Sign Python.framework properly as a framework bundle target
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+              --keychain build.keychain "$PY_FRAMEWORK"
           fi
 
           # 3. Sign remaining Mach-O binaries in Frameworks (excluding Python.framework)
