@@ -331,18 +331,31 @@ jobs:
           find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
           find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Neutralize Apple framework bundle validation by renaming the folder
+          # 2. Neutralize framework detection by moving the Python binary out of the nested structure
           PY_FRAMEWORK="$FINAL_APP/Contents/Frameworks/Python.framework"
-          PY_ENGINE="$FINAL_APP/Contents/Frameworks/Python_Engine"
 
           if [ -d "$PY_FRAMEWORK" ]; then
-            echo "=== Renaming Python.framework to bypass bundle check ==="
-            mv "$PY_FRAMEWORK" "$PY_ENGINE"
-            ln -s "Python_Engine" "$PY_FRAMEWORK"
+            echo "=== Flattening Python binary layout to disable bundle checks ==="
+
+            # Locate the actual Mach-O Python binary inside the framework structure
+            PY_BIN=$(find "$PY_FRAMEWORK" -name "Python" -type f | head -n 1)
+
+            if [ -n "$PY_BIN" ]; then
+              # Move the binary out to the root Frameworks folder under a neutral name
+              mv "$PY_BIN" "$FINAL_APP/Contents/Frameworks/libpython3.11.dylib"
+
+              # Symlink it back to its original location so PyInstaller's runtime launcher finds it
+              ln -s "$FINAL_APP/Contents/Frameworks/libpython3.11.dylib" "$PY_BIN"
+            fi
           fi
 
-          # 3. Sign all Mach-O binaries in Frameworks (including inside Python_Engine) as flat files
+          # 3. Sign all Mach-O binaries in Frameworks as individual flat files
+          # (Using -L to follow symlinks safely or skipping symlinks)
           find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
+            if [ -L "$file" ]; then
+              continue # Skip symlinks to avoid duplicate signing errors
+            fi
+
             if file "$file" | grep -q "Mach-O"; then
               echo "Signing binary: $file"
               codesign --force --options runtime --timestamp \
