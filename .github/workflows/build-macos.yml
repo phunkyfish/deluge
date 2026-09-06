@@ -178,6 +178,7 @@ jobs:
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$BREW_PREFIX/opt/gtk+3/lib:$BREW_PREFIX/opt/pango/lib:$BREW_PREFIX/opt/cairo/lib:$BREW_PREFIX/opt/glib/lib:$DYLD_LIBRARY_PATH"
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_FALLBACK_LIBRARY_PATH"
 
+          # 2. Add Homebrew binaries to PATH so PyInstaller can execute g-ir-compiler
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
@@ -330,27 +331,35 @@ jobs:
           find "$FINAL_APP/Contents/Frameworks" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete
           find "$FINAL_APP/Contents/Frameworks" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 2. Sign all Mach-O binaries in Frameworks individually by file path
-          # Using --force --preserve-metadata=identifier prevents codesign from auto-detecting invalid parent framework layouts
-          find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
-            if file "$file" | grep -q "Mach-O"; then
-              echo "=== Signing Binary: $file ==="
-              codesign --force --options runtime --timestamp \
-                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-                --keychain build.keychain "$file"
-            fi
-          done
+          # 2. Sign Python framework binaries using RELATIVE paths to bypass path-based bundle checks
+          if [ -d "$FINAL_APP/Contents/Frameworks/Python.framework" ]; then
+            echo "=== Signing Python Framework Binaries via Relative Path ==="
 
-          # 3. Sign remaining individual Mach-O binaries (.dylib / .so) inside Frameworks
+            # Navigate directly into the Python framework directory
+            pushd "$FINAL_APP/Contents/Frameworks/Python.framework" > /dev/null
+
+            find . -type f | while read -r pyfile; do
+              if file "$pyfile" | grep -q "Mach-O"; then
+                echo "Signing relative binary: $pyfile"
+                codesign --force --options runtime --timestamp \
+                  --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+                  --keychain build.keychain "$pyfile"
+              fi
+            done
+
+            popd > /dev/null
+          fi
+
+          # 3. Sign remaining Mach-O binaries in Frameworks (excluding Python.framework)
           find "$FINAL_APP/Contents/Frameworks" -type f | while read -r file; do
-            # Skip files inside Python.framework as they were handled in Step 2
             if [[ "$file" == *"Python.framework"* ]]; then
               continue
             fi
 
             if file "$file" | grep -q "Mach-O"; then
               codesign --force --options runtime --timestamp \
-                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "$file"
+                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+                --keychain build.keychain "$file"
             fi
           done
 
