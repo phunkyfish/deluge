@@ -182,7 +182,8 @@ jobs:
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
-          pyi-makespec --onedir --windowed --name="Deluge" \
+          pyinstaller --onedir --windowed --name="Deluge" --clean \
+            --append-pkg \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
@@ -201,11 +202,6 @@ jobs:
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
-
-          # Inject append_pkg=True into the EXE block in Deluge.spec
-          sed -i '' 's/console=False,/console=False,\n    append_pkg=True,/g' Deluge.spec
-
-          pyinstaller --clean Deluge.spec
 
           # 3. Inject minimal resources (skip heavy locale translations)
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
@@ -296,30 +292,16 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          echo "=== App Bundle Structure Debug ==="
-          ls -la "$FINAL_APP/Contents"
-          [ -d "$FINAL_APP/Contents/Frameworks" ] && ls -la "$FINAL_APP/Contents/Frameworks"
-
-          # Ensure standard Apple bundle folders exist
-          mkdir -p "$FINAL_APP/Contents/Resources"
-          mkdir -p "$FINAL_APP/Contents/MacOS"
-
-          # 1. Locate the main Deluge executable wherever PyInstaller generated it
-          RAW_EXEC=$(find "$FINAL_APP" -type f -name "Deluge" | head -n 1)
-
-          if [ -z "$RAW_EXEC" ]; then
-            echo "Error: Could not locate 'Deluge' binary anywhere inside .app bundle!"
+          # Verify bundle output exists
+          if [ ! -d "$FINAL_APP/Contents" ]; then
+            echo "Error: $FINAL_APP/Contents does not exist. Check PyInstaller output in 'dist/'!"
+            ls -la "$GITHUB_WORKSPACE/dist"
             exit 1
           fi
 
-          # If the main binary is not in Contents/MacOS/Deluge, move it there
-          TARGET_EXEC="$FINAL_APP/Contents/MacOS/Deluge"
-          if [ "$RAW_EXEC" != "$TARGET_EXEC" ]; then
-            echo "=== Relocating main binary from $RAW_EXEC to $TARGET_EXEC ==="
-            mv "$RAW_EXEC" "$TARGET_EXEC"
-          fi
+          # 1. Relocate non-Mach-O data directories & loose assets to Resources
+          mkdir -p "$FINAL_APP/Contents/Resources"
 
-          # 2. Relocate non-Mach-O resource directories to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r dir; do
             dirname=$(basename "$dir")
             if [[ "$dirname" != *"Python"* ]]; then
@@ -329,7 +311,6 @@ jobs:
             fi
           done
 
-          # Move non-Mach-O loose files in Frameworks to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | while read -r file; do
             if ! file "$file" | grep -q "Mach-O"; then
               filename=$(basename "$file")
@@ -338,7 +319,7 @@ jobs:
             fi
           done
 
-          # 3. Flatten Python.framework if present
+          # 2. Flatten Python.framework to eliminate bundle ambiguity
           find "$FINAL_APP" -type d -name "Python.framework" 2>/dev/null | while read -r py_fw; do
             echo "=== Stripping Python.framework shell: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
@@ -351,9 +332,11 @@ jobs:
             rm -rf "$py_fw"
           done
 
-          # 4. Sign ALL nested Mach-O binaries (Frameworks, Resources)
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f 2>/dev/null | while read -r file; do
-            if [ -L "$file" ]; then continue; fi
+          # 3. Sign ALL nested Mach-O binaries (Frameworks, Resources, MacOS)
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
+            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ]; then
+              continue
+            fi
 
             if file "$file" | grep -q "Mach-O"; then
               echo "=== Signing Mach-O Binary: $file ==="
@@ -363,19 +346,19 @@ jobs:
             fi
           done
 
-          # 5. Sign Main Executable
+          # 4. Sign Main Executable with Entitlements
           echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-            "$TARGET_EXEC"
+            "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Sign Outer Application Bundle
+          # 5. Sign Outer Application Bundle
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 7. Verification
+          # 6. Verification
           echo "=== Verifying Bundle Signature ==="
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
