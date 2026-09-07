@@ -296,10 +296,30 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Relocate non-Mach-O data directories & loose assets to Resources
-          mkdir -p "$FINAL_APP/Contents/Resources"
+          echo "=== App Bundle Structure Debug ==="
+          ls -la "$FINAL_APP/Contents"
+          [ -d "$FINAL_APP/Contents/Frameworks" ] && ls -la "$FINAL_APP/Contents/Frameworks"
 
-          # Move data folders (deluge, gi_typelibs, etc.) out of Frameworks
+          # Ensure standard Apple bundle folders exist
+          mkdir -p "$FINAL_APP/Contents/Resources"
+          mkdir -p "$FINAL_APP/Contents/MacOS"
+
+          # 1. Locate the main Deluge executable wherever PyInstaller generated it
+          RAW_EXEC=$(find "$FINAL_APP" -type f -name "Deluge" | head -n 1)
+
+          if [ -z "$RAW_EXEC" ]; then
+            echo "Error: Could not locate 'Deluge' binary anywhere inside .app bundle!"
+            exit 1
+          fi
+
+          # If the main binary is not in Contents/MacOS/Deluge, move it there
+          TARGET_EXEC="$FINAL_APP/Contents/MacOS/Deluge"
+          if [ "$RAW_EXEC" != "$TARGET_EXEC" ]; then
+            echo "=== Relocating main binary from $RAW_EXEC to $TARGET_EXEC ==="
+            mv "$RAW_EXEC" "$TARGET_EXEC"
+          fi
+
+          # 2. Relocate non-Mach-O resource directories to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r dir; do
             dirname=$(basename "$dir")
             if [[ "$dirname" != *"Python"* ]]; then
@@ -309,7 +329,7 @@ jobs:
             fi
           done
 
-          # Move any remaining non-Mach-O files in Frameworks to Resources
+          # Move non-Mach-O loose files in Frameworks to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | while read -r file; do
             if ! file "$file" | grep -q "Mach-O"; then
               filename=$(basename "$file")
@@ -318,7 +338,7 @@ jobs:
             fi
           done
 
-          # 2. Flatten Python.framework to eliminate bundle ambiguity
+          # 3. Flatten Python.framework if present
           find "$FINAL_APP" -type d -name "Python.framework" 2>/dev/null | while read -r py_fw; do
             echo "=== Stripping Python.framework shell: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
@@ -331,19 +351,10 @@ jobs:
             rm -rf "$py_fw"
           done
 
-          # 3. Sign ALL nested Mach-O binaries (Frameworks, Resources, MacOS)
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
-            # Skip main executable for the dedicated step
-            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
-              continue
-            fi
+          # 4. Sign ALL nested Mach-O binaries (Frameworks, Resources)
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f 2>/dev/null | while read -r file; do
+            if [ -L "$file" ]; then continue; fi
 
-            # Skip symlinks
-            if [ -L "$file" ]; then
-              continue
-            fi
-
-            # Strictly sign Mach-O binaries
             if file "$file" | grep -q "Mach-O"; then
               echo "=== Signing Mach-O Binary: $file ==="
               codesign --force --options runtime --timestamp \
@@ -352,27 +363,19 @@ jobs:
             fi
           done
 
-          # 4. Sign Main Executable with Entitlements
-          echo "=== Locating Main Executable ==="
-          MAIN_EXEC=$(find "$FINAL_APP/Contents/MacOS" -type f -maxdepth 2 -name "Deluge" ! -name "*.dylib" | head -n 1)
-
-          if [ -z "$MAIN_EXEC" ]; then
-            echo "Error: Main executable 'Deluge' not found inside Contents/MacOS!"
-            exit 1
-          fi
-
-          echo "=== Signing Main Executable at: $MAIN_EXEC ==="
+          # 5. Sign Main Executable
+          echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-            "$MAIN_EXEC"
+            "$TARGET_EXEC"
 
-          # 5. Sign Outer Application Bundle
+          # 6. Sign Outer Application Bundle
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Strict Gatekeeper Verification
+          # 7. Verification
           echo "=== Verifying Bundle Signature ==="
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
