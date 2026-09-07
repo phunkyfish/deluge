@@ -360,18 +360,20 @@ jobs:
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete 2>/dev/null || true
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
 
-          # 3. Flatten ALL Python.framework instances in Frameworks and Resources
+          # 3. Extract Python binary and obliterate the Python.framework folder
           find "$FINAL_APP" -type d -name "Python.framework" | while read -r py_fw; do
-            echo "=== Neutralizing Python.framework at: $py_fw ==="
+            echo "=== Completely removing Python.framework shell at: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
+            TARGET_DIR=$(dirname "$py_fw")
+            LIB_NAME="libpython3.11.dylib"
 
             if [ -n "$PY_BIN" ]; then
-              TARGET_DIR=$(dirname "$py_fw")
-              LIB_NAME="libpython_runtime_$(date +%s%N).dylib"
-
-              mv "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
-              ln -s "$TARGET_DIR/$LIB_NAME" "$PY_BIN"
+              # Copy the actual binary to the root Frameworks dir as a plain .dylib
+              cp "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
             fi
+
+            # Obliterate the entire .framework directory tree so codesign never sees the name
+            rm -rf "$py_fw"
           done
 
           # 4. Sign ALL inner Mach-O binaries first (Frameworks, Resources, and nested MacOS binaries)
