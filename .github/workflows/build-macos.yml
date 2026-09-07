@@ -203,9 +203,8 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Inject append_pkg=True into the EXE block
-          sed -i '' '/exe = EXE(/a\
-              append_pkg=True,' Deluge.spec
+          # 2. Inject append_pkg=True into the EXE block right before console=False,
+          sed -i '' 's/console=False,/append_pkg=True,\n    console=False,/g' Deluge.spec
 
           # 3. Verify the injection worked (for logs)
           grep -C 3 "append_pkg" Deluge.spec
