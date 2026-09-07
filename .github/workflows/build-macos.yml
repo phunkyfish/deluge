@@ -182,7 +182,7 @@ jobs:
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
-          # 1. Generate the spec file using your existing pyi-makespec configuration
+          # 1. Generate the initial spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
@@ -203,8 +203,12 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Inject append_pkg=True into the EXE() block in Deluge.spec
-          sed -i '' 's/console=False,/console=False,\n    append_pkg=True,/g' Deluge.spec
+          # 2. Inject append_pkg=True into the EXE block
+          sed -i '' '/exe = EXE(/a\
+              append_pkg=True,' Deluge.spec
+
+          # 3. Verify the injection worked (for logs)
+          grep -C 3 "append_pkg" Deluge.spec
 
           # 3. Build the app bundle from the patched spec file
           pyinstaller --clean Deluge.spec
