@@ -353,10 +353,18 @@ jobs:
           done
 
           # 4. Sign Main Executable with Entitlements
-          echo "=== Signing Main Executable ==="
+          echo "=== Locating Main Executable ==="
+          MAIN_EXEC=$(find "$FINAL_APP/Contents/MacOS" -type f -maxdepth 2 -name "Deluge" ! -name "*.dylib" | head -n 1)
+
+          if [ -z "$MAIN_EXEC" ]; then
+            echo "Error: Main executable 'Deluge' not found inside Contents/MacOS!"
+            exit 1
+          fi
+
+          echo "=== Signing Main Executable at: $MAIN_EXEC ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-            "$FINAL_APP/Contents/MacOS/Deluge"
+            "$MAIN_EXEC"
 
           # 5. Sign Outer Application Bundle
           echo "=== Signing Outer Application Bundle ==="
