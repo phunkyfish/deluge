@@ -191,10 +191,11 @@ jobs:
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=tkinter \
-            --collect-all gi \
-            --collect-all deluge \
-            --collect-all twisted \
-            --collect-all zope.interface \
+            --exclude-module=twisted.trial \
+            --collect-submodules=gi \
+            --collect-data=deluge \
+            --collect-submodules=twisted \
+            --collect-submodules=zope.interface \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
@@ -211,6 +212,12 @@ jobs:
 
           # 3. Build the app bundle from the patched spec file
           pyinstaller --clean Deluge.spec
+
+          echo "=== Workspace Directory Contents ==="
+          ls -la "$GITHUB_WORKSPACE"
+
+          echo "=== Dist Directory Contents ==="
+          ls -la "$GITHUB_WORKSPACE/dist" || echo "dist directory does not exist!"
 
           # 3. Inject minimal resources (skip heavy locale translations)
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
