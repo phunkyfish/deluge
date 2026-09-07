@@ -182,8 +182,8 @@ jobs:
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
-          pyinstaller --onedir --windowed --name="Deluge" --clean \
-            --append-pkg \
+          # 1. Generate the spec file using your existing pyi-makespec configuration
+          pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
@@ -202,6 +202,12 @@ jobs:
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
+
+          # 2. Inject append_pkg=True into the EXE() block in Deluge.spec
+          sed -i '' 's/console=False,/console=False,\n    append_pkg=True,/g' Deluge.spec
+
+          # 3. Build the app bundle from the patched spec file
+          pyinstaller --clean Deluge.spec
 
           # 3. Inject minimal resources (skip heavy locale translations)
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
