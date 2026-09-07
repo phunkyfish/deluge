@@ -334,11 +334,11 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Sweep non-Mach-O data directories and files out of Frameworks/MacOS to Resources
+          # 1. Sweep non-Mach-O resource directories out of Frameworks into Resources
           mkdir -p "$FINAL_APP/Contents/Resources"
           mkdir -p "$FINAL_APP/Contents/MacOS"
 
-          # Move non-Mach-O directories (deluge, gi_typelibs, etc.) to Resources
+          # Move data folders (deluge, gi_typelibs, etc.) to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
             dirname=$(basename "$dir")
             if [[ "$dirname" != *"Python"* ]]; then
@@ -348,17 +348,21 @@ jobs:
             fi
           done
 
-          # Move base_library.zip to Resources and symlink it back to MacOS for the bootloader
-          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ] || [ -f "$FINAL_APP/Contents/MacOS/base_library.zip" ]; then
-            echo "=== Relocating base_library.zip to Resources & symlinking to MacOS ==="
-            rm -f "$FINAL_APP/Contents/MacOS/base_library.zip"
-            [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ] && mv "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
+          # 2. Relocate base_library.zip to Resources AND create relative symlink in MacOS
+          echo "=== Moving base_library.zip to Resources & Symlinking ==="
+          rm -f "$FINAL_APP/Contents/MacOS/base_library.zip"
+          rm -f "$FINAL_APP/Contents/Resources/base_library.zip"
 
-            # Create relative symlink in MacOS/ pointing to Resources/
-            ln -s "../Resources/base_library.zip" "$FINAL_APP/Contents/MacOS/base_library.zip"
+          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
+            mv "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
           fi
 
-          # Move any remaining non-Mach-O loose files to Resources
+          # Create RELATIVE symlink so PyInstaller's bootloader finds its archive
+          pushd "$FINAL_APP/Contents/MacOS" > /dev/null
+          ln -s "../Resources/base_library.zip" "base_library.zip"
+          popd > /dev/null
+
+          # Move any remaining non-Mach-O loose files in Frameworks to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f | while read -r file; do
             if ! file "$file" | grep -q "Mach-O"; then
               filename=$(basename "$file")
@@ -367,38 +371,32 @@ jobs:
             fi
           done
 
-          # 2. Purge non-binary metadata files that break bundle checks
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f \( -name "*.py" -o -name "*.pyc" -o -name "*.txt" -o -name "*.json" \) -delete 2>/dev/null || true
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type d \( -name "*.dist-info" -o -name "*.egg-info" -o -name "__pycache__" \) -exec rm -rf {} + 2>/dev/null || true
-
-          # 3. Extract Python binary and obliterate the Python.framework folder
+          # 3. Purge Python.framework structure to avoid bundle ambiguity
           find "$FINAL_APP" -type d -name "Python.framework" | while read -r py_fw; do
-            echo "=== Completely removing Python.framework shell at: $py_fw ==="
+            echo "=== Stripping Python.framework shell: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
             TARGET_DIR=$(dirname "$py_fw")
             LIB_NAME="libpython3.11.dylib"
 
             if [ -n "$PY_BIN" ]; then
-              # Copy the actual binary to the root Frameworks dir as a plain .dylib
               cp "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
             fi
-
-            # Obliterate the entire .framework directory tree so codesign never sees the name
             rm -rf "$py_fw"
           done
 
-          # 4. Sign ALL inner Mach-O binaries first (Frameworks, Resources, and nested MacOS binaries)
+          # 4. Sign ALL Mach-O binaries in Frameworks, Resources, and MacOS
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f | while read -r file; do
-            # Skip the main binary for the final step
+            # Skip main executable for the final step
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               continue
             fi
 
-            # Skip symbolic links
+            # NEVER follow or sign symlinks directly
             if [ -L "$file" ]; then
               continue
             fi
 
+            # Strictly sign Mach-O binaries ONLY
             if file "$file" | grep -q "Mach-O"; then
               echo "=== Signing Mach-O Binary: $file ==="
               codesign --force --options runtime --timestamp \
@@ -407,20 +405,19 @@ jobs:
             fi
           done
 
-          # 5. Sign main Deluge executable with entitlements
+          # 5. Sign Main Executable
           echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Deep-sign top-level App Bundle
+          # 6. Sign Outer Application Bundle (Without --deep)
           echo "=== Signing Outer Application Bundle ==="
-          codesign --force --deep --options runtime --timestamp --entitlements entitlements.plist \
+          codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 7. Strict Gatekeeper Verification
-          echo "=== Verifying Signature ==="
+          # 7. Verification
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
       - name: Verify Architecture Slices
