@@ -271,6 +271,30 @@ jobs:
       - name: Install Packaging Tools
         run: brew install create-dmg
 
+      - name: Stitch Thin Architectures into Universal2 Bundle
+        run: |
+          mkdir -p dist
+          # Copy the full arm64 application structure as the universal template
+          cp -R builds/arm64/Deluge.app dist/Deluge.app
+
+          INTEL_APP="builds/x86_64/Deluge.app"
+          ARM_APP="builds/arm64/Deluge.app"
+          UNI_APP="dist/Deluge.app"
+
+          echo "=== Stitching Mach-O binaries with lipo ==="
+          find "$ARM_APP" -type f | while read -r arm_file; do
+            rel_path="${arm_file#$ARM_APP/}"
+            intel_file="$INTEL_APP/$rel_path"
+            target_file="$UNI_APP/$rel_path"
+
+            if [ -f "$intel_file" ]; then
+              if file "$arm_file" | grep -q "Mach-O"; then
+                echo "Lipo merging: $rel_path"
+                lipo -create "$intel_file" "$arm_file" -output "$target_file"
+              fi
+            fi
+          done
+
       - name: Import Apple Developer Certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
