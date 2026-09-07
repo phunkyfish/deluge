@@ -334,10 +334,11 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Sweep and relocate ALL non-Mach-O assets/archives out of Frameworks into Resources
+          # 1. Sweep non-Mach-O data directories out of Frameworks into Resources
           mkdir -p "$FINAL_APP/Contents/Resources"
+          mkdir -p "$FINAL_APP/Contents/MacOS"
 
-          # Move all non-Mach-O directories (deluge, gi_typelibs, etc.)
+          # Move non-Mach-O directories (deluge, gi_typelibs, etc.) to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d | while read -r dir; do
             dirname=$(basename "$dir")
             if [[ "$dirname" != *"Python"* ]]; then
@@ -347,7 +348,13 @@ jobs:
             fi
           done
 
-          # Move all non-Mach-O files (base_library.zip, .pyc, .zip, .dat, etc.)
+          # Move base_library.zip directly into Contents/MacOS alongside the main executable
+          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
+            echo "=== Relocating base_library.zip to Contents/MacOS/ ==="
+            mv "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/MacOS/base_library.zip"
+          fi
+
+          # Move any remaining non-Mach-O loose files to Resources
           find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f | while read -r file; do
             if ! file "$file" | grep -q "Mach-O"; then
               filename=$(basename "$file")
