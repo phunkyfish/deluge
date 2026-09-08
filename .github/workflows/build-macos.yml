@@ -370,7 +370,7 @@ jobs:
             done
           fi
 
-          # 2. Flatten Python.framework to eliminate bundle ambiguity (if present)
+          # 2. Flatten Python.framework AND move raw python script folders out of Frameworks
           find "$FINAL_APP" -type d -name "Python.framework" 2>/dev/null | while read -r py_fw; do
             echo "=== Stripping Python.framework shell: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
@@ -382,6 +382,16 @@ jobs:
             fi
             rm -rf "$py_fw"
           done
+
+          # Move raw python stdlib directories out of Frameworks to stop codesign from choking
+          if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
+            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d -name "python*" 2>/dev/null | while read -r py_dir; do
+              dirname=$(basename "$py_dir")
+              echo "=== Moving raw python folder $dirname to Resources ==="
+              cp -R "$py_dir" "$FINAL_APP/Contents/Resources/$dirname"
+              rm -rf "$py_dir"
+            done
+          fi
 
           # 3. Sign ALL nested Mach-O binaries in Resources, Frameworks, and MacOS (excluding main executable)
           find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
