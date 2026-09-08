@@ -357,15 +357,26 @@ jobs:
             exit 1
           fi
 
-          # 1. Relocate non-Mach-O files from Frameworks to Resources, BUT EXCLUDE base_library.zip
+          # 1. Move base_library.zip to Resources and create a Frameworks symlink for PyInstaller
+          #    Then relocate non-Mach-O files from Frameworks to Resources
+          mkdir -p "$FINAL_APP/Contents/Resources"
+
+          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
+            echo "=== Relocating base_library.zip & creating compatibility symlink ==="
+            # Move real file to Resources
+            cp -f "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
+            rm -f "$FINAL_APP/Contents/Frameworks/base_library.zip"
+
+            # Create relative symlink in Frameworks pointing to Resources
+            ln -sf "../Resources/base_library.zip" "$FINAL_APP/Contents/Frameworks/base_library.zip"
+          fi
+
+          # Clean remaining non-Mach-O data files out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
             echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
             find "$FINAL_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r file; do
-              filename=$(basename "$file")
-
-              # SKIP base_library.zip so PyInstaller doesn't throw PYI-40094
-              if [ "$filename" = "base_library.zip" ]; then
-                echo "Preserving critical bootstrapper file: $file"
+              # Skip symlinks (like our base_library.zip link)
+              if [ -L "$file" ]; then
                 continue
               fi
 
