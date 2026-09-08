@@ -204,24 +204,7 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Patch spec file to route base_library.zip into Resources
-
-          python3 -c "
-            with open('Deluge.spec', 'r') as f:
-                content = f.read()
-
-            patch = '''
-            # Route base_library.zip into Resources
-            a.zipfiles = [(name if name != 'base_library.zip' else 'base_library.zip', path, typecode) for name, path, typecode in a.zipfiles]
-            '''
-
-            content = content.replace('pyz = PYZ(a.pure)', patch + '\npyz = PYZ(a.pure)')
-
-            with open('Deluge.spec', 'w') as f:
-                f.write(content)
-            "
-
-          # 3. Build the app bundle from the patched spec file
+          # 3. Build the app bundle from the  spec file
           pyinstaller --clean Deluge.spec
 
           echo "=== Workspace Directory Contents ==="
@@ -368,25 +351,36 @@ jobs:
             exit 1
           fi
 
-          # 1. Clean ALL non-Mach-O files/folders out of Frameworks into Resources
+          # 1. Relocate base_library.zip to Resources & bridge back with a Symlink
           mkdir -p "$FINAL_APP/Contents/Resources"
 
+          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
+            echo "=== Relocating base_library.zip to Resources & creating symlink ==="
+            cp -f "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
+            rm -f "$FINAL_APP/Contents/Frameworks/base_library.zip"
+
+            # Create relative symlink so PyInstaller's launcher resolves it at OS level
+            ln -s "../Resources/base_library.zip" "$FINAL_APP/Contents/Frameworks/base_library.zip"
+          fi
+
+          # 2. Relocate all other non-Mach-O data files out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
-            echo "=== Cleaning Frameworks directory ==="
-            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 2>/dev/null | while read -r item; do
-              if [ -f "$item" ] && ! [ -L "$item" ]; then
-                if ! file "$item" | grep -q "Mach-O"; then
-                  rel_path="${item#$FINAL_APP/Contents/Frameworks/}"
-                  target="$FINAL_APP/Contents/Resources/$rel_path"
-                  echo "Relocating non-binary file to Resources: $rel_path"
-                  mkdir -p "$(dirname "$target")"
-                  cp -f "$item" "$target"
-                  rm -f "$item"
-                fi
+            echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
+            find "$FINAL_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r file; do
+              # Skip symlinks (like base_library.zip link)
+              if [ -L "$file" ]; then
+                continue
+              fi
+
+              if ! file "$file" | grep -q "Mach-O"; then
+                rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
+                target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
+                mkdir -p "$(dirname "$target_file")"
+                cp -f "$file" "$target_file"
+                rm -f "$file"
               fi
             done
 
-            # Remove empty directories left in Frameworks
             find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
           fi
 
@@ -413,10 +407,9 @@ jobs:
             done
           fi
 
-          # 3. Sign ALL nested Mach-O binaries in Resources, Frameworks, and MacOS (excluding main executable)
-          find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
-            # Skip main launcher and symlinks (main launcher signed separately with entitlements)
-            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ] || [ "$filename" = "base_library.zip" ]; then
+          # 3. Sign ONLY Mach-O binaries (skipping symlinks and main launcher)
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
+            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ]; then
               continue
             fi
 
