@@ -184,7 +184,7 @@ jobs:
           # 6. Generate spec file and compile thin app
           # 1. Generate initial spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
-            --noarchive
+            --noarchive \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
