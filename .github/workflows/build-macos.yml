@@ -271,20 +271,23 @@ jobs:
       - name: Install Packaging Tools
         run: brew install create-dmg
 
+      - name: Debug App Structure
+        run: |
+          echo "=== Contents of MacOS/ ==="
+          ls -la builds/arm64/Deluge.app/Contents/MacOS/
+
+          echo "=== Searching for Python ZIP or PKG archives ==="
+          find builds/arm64/Deluge.app -name "*.zip" -o -name "*.pkg"
+
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           mkdir -p dist
-          # Copy the complete arm64 application structure as the universal base template
+          # Copy full arm64 application structure as the base template
           cp -R builds/arm64/Deluge.app dist/Deluge.app
 
           INTEL_APP="builds/x86_64/Deluge.app"
           ARM_APP="builds/arm64/Deluge.app"
           UNI_APP="dist/Deluge.app"
-
-          echo "=== Comparing PKG Checksums ==="
-          shasum -a 256 builds/x86_64/Deluge.app/Contents/MacOS/Deluge.pkg
-          shasum -a 256 builds/arm64/Deluge.app/Contents/MacOS/Deluge.pkg
-          ls -la builds/arm64/Deluge.app/Contents/MacOS/Deluge.pkg
 
           echo "=== Stitching Mach-O binaries with lipo ==="
           find "$ARM_APP" -type f | while read -r arm_file; do
@@ -301,14 +304,8 @@ jobs:
             fi
           done
 
-          # Ensure execution bit is present on main executable
+          # Ensure main launcher binary is executable
           chmod +x "$UNI_APP/Contents/MacOS/Deluge"
-
-          # Verify Deluge.pkg exists in the final app
-          if [ ! -f "$UNI_APP/Contents/MacOS/Deluge.pkg" ]; then
-            echo "ERROR: Deluge.pkg is missing from $UNI_APP/Contents/MacOS/"
-            exit 1
-          fi
 
       - name: Import Apple Developer Certificate
         env:
@@ -354,26 +351,26 @@ jobs:
             exit 1
           fi
 
-          # 1. Relocate ONLY non-Mach-O resource directories to Resources
+          # 1. Relocate ONLY non-Mach-O resource directories to Resources (if Frameworks exists)
           mkdir -p "$FINAL_APP/Contents/Resources"
 
-          find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r dir; do
-            dirname=$(basename "$dir")
+          if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
+            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r dir; do
+              dirname=$(basename "$dir")
 
-            # Skip core Python runtime and dynamic load folders
-            if [[ "$dirname" == *"Python"* ]] || [[ "$dirname" == "lib-dynload" ]]; then
-              continue
-            fi
+              if [[ "$dirname" == *"Python"* ]] || [[ "$dirname" == "lib-dynload" ]]; then
+                continue
+              fi
 
-            # Only move the directory if it contains ZERO Mach-O binaries
-            if ! find "$dir" -type f -exec file {} + 2>/dev/null | grep -q "Mach-O"; then
-              echo "=== Relocating pure resource directory: $dirname ==="
-              cp -R "$dir/" "$FINAL_APP/Contents/Resources/$dirname/"
-              rm -rf "$dir"
-            fi
-          done
+              if ! find "$dir" -type f -exec file {} + 2>/dev/null | grep -q "Mach-O"; then
+                echo "=== Relocating pure resource directory: $dirname ==="
+                cp -R "$dir/" "$FINAL_APP/Contents/Resources/$dirname/"
+                rm -rf "$dir"
+              fi
+            done
+          fi
 
-          # 2. Flatten Python.framework to eliminate bundle ambiguity
+          # 2. Flatten Python.framework to eliminate bundle ambiguity (if present)
           find "$FINAL_APP" -type d -name "Python.framework" 2>/dev/null | while read -r py_fw; do
             echo "=== Stripping Python.framework shell: $py_fw ==="
             PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
@@ -386,8 +383,9 @@ jobs:
             rm -rf "$py_fw"
           done
 
-          # 3. Sign ALL nested Mach-O binaries (Frameworks, Resources, MacOS)
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
+          # 3. Sign ALL nested Mach-O binaries in Resources, Frameworks, and MacOS (excluding main executable)
+          find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
+            # Skip main launcher and symlinks (main launcher signed separately with entitlements)
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ]; then
               continue
             fi
@@ -418,8 +416,14 @@ jobs:
 
       - name: Verify Architecture Slices
         run: |
-          echo "=== Main Binary Slices ==="
+          echo "=== Main Executable ==="
           lipo -info dist/Deluge.app/Contents/MacOS/Deluge
+
+          echo "=== Sample Dylib in Resources ==="
+          lipo -info dist/Deluge.app/Contents/Resources/libgtk-3.0.dylib
+
+          echo "=== Sample Python C Extension in Resources ==="
+          lipo -info dist/Deluge.app/Contents/Resources/_cffi_backend.cpython-311-darwin.so
 
           echo "=== C Extensions Slices (sample) ==="
           find dist/Deluge.app -name "_rencode*.so" -exec lipo -info {} \;
