@@ -205,10 +205,10 @@ jobs:
             run_deluge.py
 
           # 2. Inject append_pkg=True into the EXE block right before console=False,
-          sed -i '' 's/console=False,/append_pkg=True,\n    console=False,/g' Deluge.spec
+          # sed -i '' 's/console=False,/append_pkg=True,\n    console=False,/g' Deluge.spec
 
           # 3. Verify the injection worked (for logs)
-          grep -C 3 "append_pkg" Deluge.spec
+          # grep -C 3 "append_pkg" Deluge.spec
 
           # 3. Build the app bundle from the patched spec file
           pyinstaller --clean Deluge.spec
@@ -274,7 +274,7 @@ jobs:
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           mkdir -p dist
-          # Copy the full arm64 application structure as the universal base template
+          # Copy the complete arm64 application structure as the universal base template
           cp -R builds/arm64/Deluge.app dist/Deluge.app
 
           INTEL_APP="builds/x86_64/Deluge.app"
@@ -291,13 +291,12 @@ jobs:
               if file "$arm_file" | grep -q "Mach-O"; then
                 echo "Lipo merging: $rel_path"
                 lipo -create "$intel_file" "$arm_file" -output "$target_file"
-                # FIX 1: Restore executable permission on the merged output file
                 chmod +x "$target_file"
               fi
             fi
           done
 
-          # FIX 2: Ensure main launcher binary is strictly executable
+          # Ensure execution bit is present on main executable
           chmod +x "$UNI_APP/Contents/MacOS/Deluge"
 
       - name: Import Apple Developer Certificate
