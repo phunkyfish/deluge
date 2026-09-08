@@ -274,7 +274,7 @@ jobs:
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           mkdir -p dist
-          # Copy the full arm64 application structure as the universal template
+          # Copy the full arm64 application structure as the universal base template
           cp -R builds/arm64/Deluge.app dist/Deluge.app
 
           INTEL_APP="builds/x86_64/Deluge.app"
@@ -291,9 +291,14 @@ jobs:
               if file "$arm_file" | grep -q "Mach-O"; then
                 echo "Lipo merging: $rel_path"
                 lipo -create "$intel_file" "$arm_file" -output "$target_file"
+                # FIX 1: Restore executable permission on the merged output file
+                chmod +x "$target_file"
               fi
             fi
           done
+
+          # FIX 2: Ensure main launcher binary is strictly executable
+          chmod +x "$UNI_APP/Contents/MacOS/Deluge"
 
       - name: Import Apple Developer Certificate
         env:
