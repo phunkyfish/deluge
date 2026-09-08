@@ -344,6 +344,12 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
+          # 1. Check executable size (should be small, ~300KB to ~2MB)
+          ls -lh dist/Deluge.app/Contents/MacOS/Deluge
+
+          # 2. Check for PyInstaller arch header magic inside the binary
+          strings dist/Deluge.app/Contents/MacOS/Deluge | grep -E "MEIPASS|base_library"
+
           # Verify bundle output exists
           if [ ! -d "$FINAL_APP/Contents" ]; then
             echo "Error: $FINAL_APP/Contents does not exist. Check PyInstaller output in 'dist/'!"
@@ -351,10 +357,18 @@ jobs:
             exit 1
           fi
 
-          # 1. Relocate ALL non-Mach-O files from Frameworks to Resources (preserving relative paths)
+          # 1. Relocate non-Mach-O files from Frameworks to Resources, BUT EXCLUDE base_library.zip
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
             echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
             find "$FINAL_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r file; do
+              filename=$(basename "$file")
+
+              # SKIP base_library.zip so PyInstaller doesn't throw PYI-40094
+              if [ "$filename" = "base_library.zip" ]; then
+                echo "Preserving critical bootstrapper file: $file"
+                continue
+              fi
+
               if ! file "$file" | grep -q "Mach-O"; then
                 rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
                 target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
@@ -362,14 +376,12 @@ jobs:
 
                 echo "Copying non-binary data file: $rel_path -> Resources/Frameworks_data/"
                 mkdir -p "$target_dir"
-
-                # Copy file safely, then remove source to avoid leaving un-signable code objects behind
                 cp -f "$file" "$target_file"
                 rm -f "$file"
               fi
             done
 
-            # Clean up any empty directories left in Frameworks
+            # Clean up empty directories left behind
             find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
           fi
 
@@ -399,7 +411,7 @@ jobs:
           # 3. Sign ALL nested Mach-O binaries in Resources, Frameworks, and MacOS (excluding main executable)
           find "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
             # Skip main launcher and symlinks (main launcher signed separately with entitlements)
-            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ]; then
+            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ] || [ "$filename" = "base_library.zip" ]; then
               continue
             fi
 
