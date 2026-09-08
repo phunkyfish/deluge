@@ -351,19 +351,25 @@ jobs:
             exit 1
           fi
 
-          # 1. Relocate ONLY non-Mach-O resource directories to Resources (if Frameworks exists)
-          mkdir -p "$FINAL_APP/Contents/Resources"
-
+          # 1. Relocate non-Mach-O files (e.g., base_library.zip) out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
+            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | while read -r file; do
+              if ! file "$file" | grep -q "Mach-O"; then
+                filename=$(basename "$file")
+                echo "=== Relocating non-Mach-O file to Resources: $filename ==="
+                mv "$file" "$FINAL_APP/Contents/Resources/$filename"
+              fi
+            done
+
+            # Relocate non-Mach-O directories (e.g., python3.11 stdlib) out of Frameworks
             find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while read -r dir; do
               dirname=$(basename "$dir")
-
-              if [[ "$dirname" == *"Python"* ]] || [[ "$dirname" == "lib-dynload" ]]; then
+              if [[ "$dirname" == *"Python.framework"* ]]; then
                 continue
               fi
 
               if ! find "$dir" -type f -exec file {} + 2>/dev/null | grep -q "Mach-O"; then
-                echo "=== Relocating pure resource directory: $dirname ==="
+                echo "=== Relocating non-binary directory to Resources: $dirname ==="
                 cp -R "$dir/" "$FINAL_APP/Contents/Resources/$dirname/"
                 rm -rf "$dir"
               fi
