@@ -281,6 +281,11 @@ jobs:
           ARM_APP="builds/arm64/Deluge.app"
           UNI_APP="dist/Deluge.app"
 
+          echo "=== Comparing PKG Checksums ==="
+          shasum -a 256 builds/x86_64/Deluge.app/Contents/MacOS/Deluge.pkg
+          shasum -a 256 builds/arm64/Deluge.app/Contents/MacOS/Deluge.pkg
+          ls -la builds/arm64/Deluge.app/Contents/MacOS/Deluge.pkg
+
           echo "=== Stitching Mach-O binaries with lipo ==="
           find "$ARM_APP" -type f | while read -r arm_file; do
             rel_path="${arm_file#$ARM_APP/}"
@@ -298,6 +303,12 @@ jobs:
 
           # Ensure execution bit is present on main executable
           chmod +x "$UNI_APP/Contents/MacOS/Deluge"
+
+          # Verify Deluge.pkg exists in the final app
+          if [ ! -f "$UNI_APP/Contents/MacOS/Deluge.pkg" ]; then
+            echo "ERROR: Deluge.pkg is missing from $UNI_APP/Contents/MacOS/"
+            exit 1
+          fi
 
       - name: Import Apple Developer Certificate
         env:
