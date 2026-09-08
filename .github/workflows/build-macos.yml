@@ -182,7 +182,7 @@ jobs:
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
-          # 1. Generate the initial spec file
+          # 1. Generate initial spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
@@ -204,11 +204,21 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Inject append_pkg=True into the EXE block right before console=False,
-          # sed -i '' 's/console=False,/append_pkg=True,\n    console=False,/g' Deluge.spec
+          # 2. Patch spec file to route base_library.zip into Resources
+          python3 -c "
+            with open('Deluge.spec', 'r') as f:
+                content = f.read()
 
-          # 3. Verify the injection worked (for logs)
-          # grep -C 3 "append_pkg" Deluge.spec
+            patch = '''
+            # Route base_library.zip into Resources
+            a.zipfiles = [(name if name != 'base_library.zip' else 'base_library.zip', path, typecode) for name, path, typecode in a.zipfiles]
+            '''
+
+            content = content.replace('pyz = PYZ(a.pure)', patch + '\npyz = PYZ(a.pure)')
+
+            with open('Deluge.spec', 'w') as f:
+                f.write(content)
+            "
 
           # 3. Build the app bundle from the patched spec file
           pyinstaller --clean Deluge.spec
@@ -371,28 +381,25 @@ jobs:
             ln -sf "../Resources/base_library.zip" "$FINAL_APP/Contents/Frameworks/base_library.zip"
           fi
 
-          # Clean remaining non-Mach-O data files out of Frameworks
+          # 1. Clean ALL non-Mach-O files/folders out of Frameworks into Resources
+          mkdir -p "$FINAL_APP/Contents/Resources"
+
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
-            echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
-            find "$FINAL_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r file; do
-              # Skip symlinks (like our base_library.zip link)
-              if [ -L "$file" ]; then
-                continue
-              fi
-
-              if ! file "$file" | grep -q "Mach-O"; then
-                rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
-                target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
-                target_dir=$(dirname "$target_file")
-
-                echo "Copying non-binary data file: $rel_path -> Resources/Frameworks_data/"
-                mkdir -p "$target_dir"
-                cp -f "$file" "$target_file"
-                rm -f "$file"
+            echo "=== Cleaning Frameworks directory ==="
+            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 2>/dev/null | while read -r item; do
+              if [ -f "$item" ] && ! [ -L "$item" ]; then
+                if ! file "$item" | grep -q "Mach-O"; then
+                  rel_path="${item#$FINAL_APP/Contents/Frameworks/}"
+                  target="$FINAL_APP/Contents/Resources/$rel_path"
+                  echo "Relocating non-binary file to Resources: $rel_path"
+                  mkdir -p "$(dirname "$target")"
+                  cp -f "$item" "$target"
+                  rm -f "$item"
+                fi
               fi
             done
 
-            # Clean up empty directories left behind
+            # Remove empty directories left in Frameworks
             find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
           fi
 
