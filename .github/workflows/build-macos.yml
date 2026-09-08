@@ -184,6 +184,7 @@ jobs:
           # 6. Generate spec file and compile thin app
           # 1. Generate initial spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
+            --noarchive
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
@@ -353,15 +354,6 @@ jobs:
 
           # 1. Relocate base_library.zip to Resources & bridge back with a Symlink
           mkdir -p "$FINAL_APP/Contents/Resources"
-
-          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
-            echo "=== Relocating base_library.zip to Resources & creating symlink ==="
-            cp -f "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
-            rm -f "$FINAL_APP/Contents/Frameworks/base_library.zip"
-
-            # Create relative symlink so PyInstaller's launcher resolves it at OS level
-            ln -s "../Resources/base_library.zip" "$FINAL_APP/Contents/Frameworks/base_library.zip"
-          fi
 
           # 2. Relocate all other non-Mach-O data files out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
