@@ -205,6 +205,7 @@ jobs:
             run_deluge.py
 
           # 2. Patch spec file to route base_library.zip into Resources
+
           python3 -c "
             with open('Deluge.spec', 'r') as f:
                 content = f.read()
@@ -365,20 +366,6 @@ jobs:
             echo "Error: $FINAL_APP/Contents does not exist. Check PyInstaller output in 'dist/'!"
             ls -la "$GITHUB_WORKSPACE/dist"
             exit 1
-          fi
-
-          # 1. Move base_library.zip to Resources and create a Frameworks symlink for PyInstaller
-          #    Then relocate non-Mach-O files from Frameworks to Resources
-          mkdir -p "$FINAL_APP/Contents/Resources"
-
-          if [ -f "$FINAL_APP/Contents/Frameworks/base_library.zip" ]; then
-            echo "=== Relocating base_library.zip & creating compatibility symlink ==="
-            # Move real file to Resources
-            cp -f "$FINAL_APP/Contents/Frameworks/base_library.zip" "$FINAL_APP/Contents/Resources/base_library.zip"
-            rm -f "$FINAL_APP/Contents/Frameworks/base_library.zip"
-
-            # Create relative symlink in Frameworks pointing to Resources
-            ln -sf "../Resources/base_library.zip" "$FINAL_APP/Contents/Frameworks/base_library.zip"
           fi
 
           # 1. Clean ALL non-Mach-O files/folders out of Frameworks into Resources
