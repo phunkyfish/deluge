@@ -269,6 +269,9 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
+          # Define workspace target path
+          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
+
           # 1. Unpack thin apps preserving symlinks
           mkdir -p /tmp/arm64 /tmp/x86_64
           tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
