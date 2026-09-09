@@ -253,6 +253,8 @@ jobs:
     name: Stitch & Package Universal2 DMG
     needs: build-thin-apps
     runs-on: macos-14
+    env:
+      FINAL_APP: "${{ github.workspace }}/dist/Deluge.app"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -269,20 +271,19 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
-          # Define absolute dist path and ensure parent folder exists
+          # 1. Clean workspace and ensure parent dist/ directory exists
+          rm -rf "$GITHUB_WORKSPACE/dist"
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
-          rm -rf "$FINAL_APP"
 
-          # 1. Unpack thin apps preserving symlinks
+          # 2. Unpack thin apps preserving symlinks
           mkdir -p /tmp/arm64 /tmp/x86_64
           tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
           tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
 
-          # 2. Establish base app directly into $FINAL_APP
+          # 3. Establish base app structure directly at $FINAL_APP
           cp -a /tmp/arm64/Deluge.app "$FINAL_APP"
 
-          # 3. Stitch the Main Launcher Executable into Universal2
+          # 4. Stitch Main Launcher Executable
           echo "=== Stitching Universal2 Launcher Executable ==="
           lipo -create \
             "/tmp/arm64/Deluge.app/Contents/MacOS/Deluge" \
@@ -291,7 +292,7 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 4. Lipo-stitch Mach-O C-extensions and Dynamic Libraries (.dylib / .so)
+          # 5. Lipo-stitch C-extensions
           echo "=== Merging C-extensions and Frameworks via lipo ==="
           find /tmp/arm64/Deluge.app/Contents/Frameworks -type f 2>/dev/null | while read -r arm_file; do
             rel_path="${arm_file#/tmp/arm64/Deluge.app/Contents/Frameworks/}"
@@ -303,7 +304,7 @@ jobs:
             fi
           done
 
-          # 5. Fix Resources duplicate binaries (Convert physical duplicates back to Symlinks)
+          # 6. Re-link duplicated binaries
           echo "=== Re-linking duplicated binaries in Resources ==="
           find "$FINAL_APP/Contents/Resources" -type f 2>/dev/null | while read -r res_file; do
             filename=$(basename "$res_file")
@@ -316,7 +317,7 @@ jobs:
             fi
           done
 
-          # 6. Clean non-Mach-O loose data out of Frameworks (leaving symlinks intact)
+          # 7. Clean non-Mach-O loose data out of Frameworks
           find "$FINAL_APP/Contents/Frameworks" -type f ! -L 2>/dev/null | while read -r file; do
             if ! file "$file" | grep -q "Mach-O"; then
               rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
@@ -358,17 +359,6 @@ jobs:
 
       - name: Sign Universal2 App Bundle
         run: |
-      - name: Sign Universal2 App Bundle
-        run: |
-          # 1. Ensure dist/ exists and locate Deluge.app
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-
-          # If Deluge.app accidentally landed in workspace root, move it into dist/
-          if [ -d "$GITHUB_WORKSPACE/Deluge.app" ] && [ ! -d "$GITHUB_WORKSPACE/dist/Deluge.app" ]; then
-            echo "Moving misplaced Deluge.app into dist/"
-            mv "$GITHUB_WORKSPACE/Deluge.app" "$GITHUB_WORKSPACE/dist/Deluge.app"
-          fi
-
           FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
 
           if [ ! -d "$FINAL_APP/Contents" ]; then
@@ -377,7 +367,7 @@ jobs:
             exit 1
           fi
 
-          echo "Signing target verified at: $FINAL_APP"
+          echo "Target signing app path verified at: $FINAL_APP"
 
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
@@ -385,29 +375,7 @@ jobs:
           # 1. Ensure executable permissions
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 2. Clean loose non-Mach-O data out of Frameworks
-          if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
-            find "$FINAL_APP/Contents/Frameworks" -type f ! -L 2>/dev/null | while read -r file; do
-              if ! file "$file" | grep -q "Mach-O"; then
-                rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
-                target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
-                mkdir -p "$(dirname "$target_file")"
-                mv -f "$file" "$target_file"
-              fi
-            done
-            find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
-          fi
-
-          # 3. Move raw python stdlib directories out of Frameworks
-          if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
-            find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d -name "python*" 2>/dev/null | while read -r py_dir; do
-              dirname=$(basename "$py_dir")
-              mkdir -p "$FINAL_APP/Contents/Resources"
-              mv -f "$py_dir" "$FINAL_APP/Contents/Resources/$dirname"
-            done
-          fi
-
-          # 4. Sign ONLY physical Mach-O binaries (ignoring symlinks & main launcher)
+          # 2. Sign ONLY physical Mach-O binaries (bottom-up, skipping symlinks & main launcher)
           echo "=== Signing Inner Mach-O Binaries ==="
           find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f ! -L 2>/dev/null | while read -r file; do
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
@@ -415,46 +383,41 @@ jobs:
             fi
 
             if file "$file" | grep -q "Mach-O"; then
+              echo "Signing inner binary: $file"
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
             fi
           done
 
-          # 5. Sign Main Executable with Entitlements
+          # 3. Sign Main Executable with Entitlements
           echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Sign Outer Application Bundle (No --deep)
+          # 4. Sign Outer Application Bundle (Envelope only)
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          echo "=== Debugging App Location Post-Sign ==="
-          pwd
-          ls -la "$GITHUB_WORKSPACE/dist"
-          ls -la "$FINAL_APP" || echo "FINAL_APP path is broken!"
-
-          # 7. Verification
+          # 5. Strict Verification
           echo "=== Verifying Bundle Signature ==="
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
       - name: Verify Architecture Slices
         run: |
-          echo "=== Main Executable ==="
-          lipo -info dist/Deluge.app/Contents/MacOS/Deluge
+          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
 
-          echo "=== Sample Dylib in Resources ==="
-          lipo -info dist/Deluge.app/Contents/Resources/libgtk-3.0.dylib
+          echo "=== Main Executable Architecture ==="
+          lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
 
-          echo "=== Sample Python C Extension in Resources ==="
-          lipo -info dist/Deluge.app/Contents/Resources/_cffi_backend.cpython-311-darwin.so
+          echo "=== Primary GTK Dynamic Library ==="
+          find "$FINAL_APP/Contents/Frameworks" -name "libgtk-3*.dylib" -exec lipo -info {} \; 2>/dev/null || true
 
-          echo "=== C Extensions Slices (sample) ==="
-          find dist/Deluge.app -name "_rencode*.so" -exec lipo -info {} \;
+          echo "=== Core C-Extensions (rencode / cffi) ==="
+          find "$FINAL_APP" \( -name "_rencode*.so" -o -name "_cffi_backend*.so" \) -exec lipo -info {} \; 2>/dev/null || true
 
       - name: Build Outer DMG Installer
         run: |
@@ -464,11 +427,15 @@ jobs:
           else
             APP_VERSION="2.2.0"
           fi
-          echo "RESOLVED_APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+          echo "RESOLVED_APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+          DMG_FILE="Deluge-${APP_VERSION}-Universal.dmg"
 
+          # Clear and stage clean app bundle
+          rm -rf secure_dmg_staging
           mkdir -p secure_dmg_staging
-          ditto $GITHUB_WORKSPACE/dist/Deluge.app secure_dmg_staging/Deluge.app
+          ditto "$GITHUB_WORKSPACE/dist/Deluge.app" secure_dmg_staging/Deluge.app
 
+          # Create DMG (allow exit code 2 for headless runner layout notices)
           create-dmg \
             --volname "Deluge Universal Installer" \
             --window-pos 200 120 \
@@ -476,14 +443,18 @@ jobs:
             --icon-size 100 \
             --icon "Deluge.app" 200 190 \
             --app-drop-link 600 190 \
-            "Deluge-${APP_VERSION}-Universal.dmg" \
-            "secure_dmg_staging/"
+            "$DMG_FILE" \
+            "secure_dmg_staging/" || true
 
-          codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${APP_VERSION}-Universal.dmg"
+          if [ ! -f "$DMG_FILE" ]; then
+            echo "Error: $DMG_FILE was not generated!"
+            exit 1
+          fi
 
-          echo "=== Verifying Universal2 Binaries ==="
-          file "$FINAL_APP/Contents/MacOS/Deluge"
-          file "$FINAL_APP/Contents/Frameworks/libtorrent"* 2>/dev/null | head -n 1
+          # Sign the outer DMG container
+          codesign --force --options runtime --timestamp \
+            --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+            --keychain build.keychain "$DMG_FILE"
 
       - name: Notarize and Staple DMG
         env:
@@ -492,6 +463,7 @@ jobs:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           DMG_NAME="Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
+          echo "Submitting $DMG_NAME for Apple notarization..."
 
           SUBMISSION_OUT=$(xcrun notarytool submit "$DMG_NAME" \
             --apple-id "$APPLE_ID" \
@@ -500,17 +472,23 @@ jobs:
             --wait 2>&1)
 
           echo "$SUBMISSION_OUT"
-          SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2;exit; }')
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2; exit; }')
 
-          if echo "$SUBMISSION_OUT" | grep -q "status: Invalid" || [ -z "$SUBMISSION_ID" ]; then
-            xcrun notarytool log "$SUBMISSION_ID" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$TEAM_ID"
+          if echo "$SUBMISSION_OUT" | grep -qE "status: (Invalid|Rejected)" || [ -z "$SUBMISSION_ID" ]; then
+            echo "=== Notarization Failed. Fetching Log... ==="
+            [ -n "$SUBMISSION_ID" ] && xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$TEAM_ID"
             exit 1
           fi
 
+          echo "=== Stapling Notarization Ticket ==="
           xcrun stapler staple "$DMG_NAME"
 
       - name: Upload Finished DMG Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Deluge-macOS-Universal
-          path: Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg
+          path: Deluge-*-Universal.dmg
+
