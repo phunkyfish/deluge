@@ -294,38 +294,54 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
-          # 1. Clean workspace and ensure parent dist/ directory exists
-          rm -rf "$GITHUB_WORKSPACE/dist"
-          mkdir -p "$GITHUB_WORKSPACE/dist"
+          # 1. Clean workspace and prepare extraction targets
+          rm -rf "$FINAL_APP" /tmp/arm64 /tmp/x86_64
+          mkdir -p "$GITHUB_WORKSPACE/dist" /tmp/arm64 /tmp/x86_64
 
-          # 2. Unpack thin apps preserving symlinks
-          mkdir -p /tmp/arm64 /tmp/x86_64
+          # 2. Extract tarballs
           tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
           tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
 
-          # 3. Establish base app structure directly at $FINAL_APP
-          cp -a /tmp/arm64/Deluge.app "$FINAL_APP"
+          # Resolve physical app location inside extraction directories
+          ARM_APP=$(find /tmp/arm64 -name "Deluge.app" -type d | head -n 1)
+          X86_APP=$(find /tmp/x86_64 -name "Deluge.app" -type d | head -n 1)
+
+          if [ -z "$ARM_APP" ] || [ -z "$X86_APP" ]; then
+            echo "Error: Failed to locate Deluge.app in extracted tarballs!"
+            echo "ARM extraction directory:" && ls -la /tmp/arm64
+            echo "X86 extraction directory:" && ls -la /tmp/x86_64
+            exit 1
+          fi
+
+          echo "Found ARM app at: $ARM_APP"
+          echo "Found x86 app at: $X86_APP"
+
+          # 3. Establish base structure from ARM64 build
+          cp -a "$ARM_APP" "$FINAL_APP"
 
           # 4. Stitch Main Launcher Executable
           echo "=== Stitching Universal2 Launcher Executable ==="
           lipo -create \
-            "/tmp/arm64/Deluge.app/Contents/MacOS/Deluge" \
-            "/tmp/x86_64/Deluge.app/Contents/MacOS/Deluge" \
+            "$ARM_APP/Contents/MacOS/Deluge" \
+            "$X86_APP/Contents/MacOS/Deluge" \
             -output "$FINAL_APP/Contents/MacOS/Deluge"
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Lipo-stitch C-extensions
+          # 5. Lipo-stitch Mach-O C-extensions and Frameworks
           echo "=== Merging C-extensions and Frameworks via lipo ==="
-          find /tmp/arm64/Deluge.app/Contents/Frameworks -type f 2>/dev/null | while read -r arm_file; do
-            rel_path="${arm_file#/tmp/arm64/Deluge.app/Contents/Frameworks/}"
-            x86_file="/tmp/x86_64/Deluge.app/Contents/Frameworks/$rel_path"
-            target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
+          if [ -d "$ARM_APP/Contents/Frameworks" ]; then
+            find "$ARM_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r arm_file; do
+              rel_path="${arm_file#$ARM_APP/Contents/Frameworks/}"
+              x86_file="$X86_APP/Contents/Frameworks/$rel_path"
+              target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
 
-            if [ -f "$x86_file" ] && file "$arm_file" | grep -q "Mach-O"; then
-              lipo -create "$arm_file" "$x86_file" -output "$target_file"
-            fi
-          done
+              if [ -f "$x86_file" ] && file "$arm_file" | grep -q "Mach-O"; then
+                echo "Lipo merging: $rel_path"
+                lipo -create "$arm_file" "$x86_file" -output "$target_file"
+              fi
+            done
+          fi
 
           # 6. Re-link duplicated binaries
           echo "=== Re-linking duplicated binaries in Resources ==="
