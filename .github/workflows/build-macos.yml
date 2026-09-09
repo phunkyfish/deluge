@@ -237,14 +237,24 @@ jobs:
 
       - name: Archive Thin App (Preserving Symlinks)
         run: |
-          mkdir -p dist_tar
-          tar -czf "dist_tar/deluge-${{ matrix.arch }}.tar.gz" -C dist Deluge.app
+          echo "=== Archiving dist/Deluge.app into tar.gz ==="
+          # Check that PyInstaller actually produced Deluge.app first
+          if [ ! -d "dist/Deluge.app" ]; then
+            echo "Error: dist/Deluge.app does not exist before archiving!"
+            exit 1
+          fi
+
+          # Create clean tarball preserving symlinks (-h is NOT used so symlinks remain symlinks)
+          tar -czvf "deluge-${{ matrix.arch }}.tar.gz" -C dist Deluge.app
+
+          # Verify non-zero file size
+          ls -lh "deluge-${{ matrix.arch }}.tar.gz"
 
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: dist_tar/deluge-${{ matrix.arch }}.tar.gz
+          path: deluge-${{ matrix.arch }}.tar.gz
 
   # ====================================================================
   # JOB 3: Merge Architecture Artifacts into Universal 2
@@ -265,6 +275,19 @@ jobs:
           pattern: deluge-thin-*
           path: builds
           merge-multiple: true
+
+      - name: Inspect Downloaded Artifacts
+        run: |
+          echo "=== Checking Downloaded Files in builds/ ==="
+          ls -la builds/
+
+          echo "=== Testing Arm64 Tarball Integrity ==="
+          file builds/deluge-arm64.tar.gz || true
+          tar -ztvf builds/deluge-arm64.tar.gz | head -n 20 || echo "FAILED TO READ ARM64 TARBALL!"
+
+          echo "=== Testing x86_64 Tarball Integrity ==="
+          file builds/deluge-x86_64.tar.gz || true
+          tar -ztvf builds/deluge-x86_64.tar.gz | head -n 20 || echo "FAILED TO READ X86_64 TARBALL!"
 
       - name: Install Packaging Tools
         run: brew install create-dmg
