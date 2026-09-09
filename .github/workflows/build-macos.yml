@@ -468,6 +468,10 @@ jobs:
 
           codesign --force --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain "Deluge-${APP_VERSION}-Universal.dmg"
 
+          echo "=== Verifying Universal2 Binaries ==="
+          file "$FINAL_APP/Contents/MacOS/Deluge"
+          file "$FINAL_APP/Contents/Frameworks/libtorrent"* 2>/dev/null | head -n 1
+
       - name: Notarize and Staple DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
