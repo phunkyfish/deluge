@@ -359,8 +359,6 @@ jobs:
 
       - name: Sign Universal2 App Bundle
         run: |
-          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
-
           if [ ! -d "$FINAL_APP/Contents" ]; then
             echo "Error: Could not locate $FINAL_APP!"
             ls -la "$GITHUB_WORKSPACE"
@@ -408,8 +406,6 @@ jobs:
 
       - name: Verify Architecture Slices
         run: |
-          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
-
           echo "=== Main Executable Architecture ==="
           lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
 
