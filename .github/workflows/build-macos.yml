@@ -269,17 +269,18 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
-          # Define workspace target path
+          # Clear any old dist directory to prevent nested folders
+          rm -rf "$GITHUB_WORKSPACE/dist"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
           FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
 
-          # 1. Unpack thin apps preserving symlinks
+          # 1. Unpack thin apps
           mkdir -p /tmp/arm64 /tmp/x86_64
           tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
           tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
 
-          # 2. Establish base app structure from ARM64
-          mkdir -p "$FINAL_APP"
-          cp -a /tmp/arm64/Deluge.app/ "$FINAL_APP/"
+          # 2. Establish base app directly into $FINAL_APP
+          cp -a /tmp/arm64/Deluge.app "$FINAL_APP"
 
           # 3. Stitch the Main Launcher Executable into Universal2
           echo "=== Stitching Universal2 Launcher Executable ==="
@@ -357,24 +358,25 @@ jobs:
 
       - name: Sign Universal2 App Bundle
         run: |
-          # Resolve absolute real path to prevent symlink displacement
-          FINAL_APP=$(python3 -c "import os; print(os.path.realpath('$GITHUB_WORKSPACE/dist/Deluge.app'))")
-          echo "Target signing app path: $FINAL_APP"
+          # Dynamically locate Deluge.app in dist
+          FINAL_APP=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 2 -name "Deluge.app" -type d | head -n 1)
+
+          if [ -z "$FINAL_APP" ] || [ ! -d "$FINAL_APP/Contents" ]; then
+            echo "Error: Could not locate a valid Deluge.app inside $GITHUB_WORKSPACE/dist!"
+            ls -la "$GITHUB_WORKSPACE/dist"
+            exit 1
+          fi
+
+          echo "Target signing app path resolved to: $FINAL_APP"
 
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          if [ ! -d "$FINAL_APP/Contents" ]; then
-            echo "Error: $FINAL_APP/Contents does not exist!"
-            exit 1
-          fi
-
           # 1. Ensure executable permissions
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 2. Relocate non-Mach-O data files out of Frameworks
+          # 2. Clean loose non-Mach-O data out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
-            echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
             find "$FINAL_APP/Contents/Frameworks" -type f ! -L 2>/dev/null | while read -r file; do
               if ! file "$file" | grep -q "Mach-O"; then
                 rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
@@ -386,11 +388,10 @@ jobs:
             find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
           fi
 
-          # 3. Move raw python stdlib directories out of Frameworks if present
+          # 3. Move raw python stdlib directories out of Frameworks
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
             find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d -name "python*" 2>/dev/null | while read -r py_dir; do
               dirname=$(basename "$py_dir")
-              echo "=== Moving raw python folder $dirname to Resources ==="
               mkdir -p "$FINAL_APP/Contents/Resources"
               mv -f "$py_dir" "$FINAL_APP/Contents/Resources/$dirname"
             done
@@ -404,7 +405,6 @@ jobs:
             fi
 
             if file "$file" | grep -q "Mach-O"; then
-              echo "Signing: $file"
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
@@ -417,7 +417,7 @@ jobs:
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Sign Outer Application Bundle (WITHOUT --deep)
+          # 6. Sign Outer Application Bundle (No --deep)
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
