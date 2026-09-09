@@ -235,11 +235,16 @@ jobs:
           # 5. Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
+      - name: Archive Thin App (Preserving Symlinks)
+        run: |
+          mkdir -p dist_tar
+          tar -czf "dist_tar/deluge-${{ matrix.arch }}.tar.gz" -C dist Deluge.app
+
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: dist/Deluge.app
+          path: dist_tar/deluge-${{ matrix.arch }}.tar.gz
 
   # ====================================================================
   # JOB 3: Merge Architecture Artifacts into Universal 2
@@ -252,17 +257,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download Intel Build
+      - name: Download Thin App Artifacts for Intel and Arm64
         uses: actions/download-artifact@v4
         with:
-          name: deluge-thin-x86_64
-          path: builds/x86_64/Deluge.app
-
-      - name: Download Arm64 Build
-        uses: actions/download-artifact@v4
-        with:
-          name: deluge-thin-arm64
-          path: builds/arm64/Deluge.app
+          pattern: deluge-thin-*
+          path: builds
+          merge-multiple: true
 
       - name: Install Packaging Tools
         run: brew install create-dmg
