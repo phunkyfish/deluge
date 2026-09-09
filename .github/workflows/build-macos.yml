@@ -269,12 +269,12 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
-          # Clear any old dist directory to prevent nested folders
-          rm -rf "$GITHUB_WORKSPACE/dist"
+          # Define absolute dist path and ensure parent folder exists
           mkdir -p "$GITHUB_WORKSPACE/dist"
           FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
+          rm -rf "$FINAL_APP"
 
-          # 1. Unpack thin apps
+          # 1. Unpack thin apps preserving symlinks
           mkdir -p /tmp/arm64 /tmp/x86_64
           tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
           tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
@@ -358,16 +358,26 @@ jobs:
 
       - name: Sign Universal2 App Bundle
         run: |
-          # Dynamically locate Deluge.app in dist
-          FINAL_APP=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 2 -name "Deluge.app" -type d | head -n 1)
+      - name: Sign Universal2 App Bundle
+        run: |
+          # 1. Ensure dist/ exists and locate Deluge.app
+          mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          if [ -z "$FINAL_APP" ] || [ ! -d "$FINAL_APP/Contents" ]; then
-            echo "Error: Could not locate a valid Deluge.app inside $GITHUB_WORKSPACE/dist!"
-            ls -la "$GITHUB_WORKSPACE/dist"
+          # If Deluge.app accidentally landed in workspace root, move it into dist/
+          if [ -d "$GITHUB_WORKSPACE/Deluge.app" ] && [ ! -d "$GITHUB_WORKSPACE/dist/Deluge.app" ]; then
+            echo "Moving misplaced Deluge.app into dist/"
+            mv "$GITHUB_WORKSPACE/Deluge.app" "$GITHUB_WORKSPACE/dist/Deluge.app"
+          fi
+
+          FINAL_APP="$GITHUB_WORKSPACE/dist/Deluge.app"
+
+          if [ ! -d "$FINAL_APP/Contents" ]; then
+            echo "Error: Could not locate $FINAL_APP!"
+            ls -la "$GITHUB_WORKSPACE"
             exit 1
           fi
 
-          echo "Target signing app path resolved to: $FINAL_APP"
+          echo "Signing target verified at: $FINAL_APP"
 
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
