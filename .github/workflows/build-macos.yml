@@ -404,6 +404,7 @@ jobs:
             fi
 
             if file "$file" | grep -q "Mach-O"; then
+              echo "Signing: $file"
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
@@ -416,11 +417,16 @@ jobs:
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 6. Sign Outer Application Bundle Deeply
+          # 6. Sign Outer Application Bundle (WITHOUT --deep)
           echo "=== Signing Outer Application Bundle ==="
-          codesign --force --deep --options runtime --timestamp --entitlements entitlements.plist \
+          codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
+
+          echo "=== Debugging App Location Post-Sign ==="
+          pwd
+          ls -la "$GITHUB_WORKSPACE/dist"
+          ls -la "$FINAL_APP" || echo "FINAL_APP path is broken!"
 
           # 7. Verification
           echo "=== Verifying Bundle Signature ==="
