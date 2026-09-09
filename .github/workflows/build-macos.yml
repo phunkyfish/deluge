@@ -276,31 +276,53 @@ jobs:
 
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
-          mkdir -p dist
-          # Copy full arm64 application structure as the base template
-          cp -R builds/arm64/Deluge.app dist/Deluge.app
+          # 1. Unpack thin apps preserving symlinks
+          tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
+          tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
 
-          INTEL_APP="builds/x86_64/Deluge.app"
-          ARM_APP="builds/arm64/Deluge.app"
-          UNI_APP="dist/Deluge.app"
+          # 2. Establish base app from ARM64 (Preserves native bootloader)
+          mkdir -p "$FINAL_APP"
+          cp -a /tmp/arm64/Deluge.app/ "$FINAL_APP/"
 
-          echo "=== Stitching Mach-O binaries with lipo ==="
-          find "$ARM_APP" -type f | while read -r arm_file; do
-            rel_path="${arm_file#$ARM_APP/}"
-            intel_file="$INTEL_APP/$rel_path"
-            target_file="$UNI_APP/$rel_path"
+          # Ensure main launcher binary is strictly executable
+          chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-            if [ -f "$intel_file" ]; then
-              if file "$arm_file" | grep -q "Mach-O"; then
-                echo "Lipo merging: $rel_path"
-                lipo -create "$intel_file" "$arm_file" -output "$target_file"
-                chmod +x "$target_file"
-              fi
+          # 3. Lipo-stitch ONLY Mach-O C-extensions and Dynamic Libraries (.dylib / .so)
+          echo "=== Merging C-extensions and Frameworks via lipo ==="
+          find /tmp/arm64/Deluge.app/Contents/Frameworks -type f 2>/dev/null | while read -r arm_file; do
+            rel_path="${arm_file#/tmp/arm64/Deluge.app/Contents/Frameworks/}"
+            x86_file="/tmp/x86_64/Deluge.app/Contents/Frameworks/$rel_path"
+            target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
+
+            if [ -f "$x86_file" ] && file "$arm_file" | grep -q "Mach-O"; then
+              # Stitch the binary into Universal2
+              lipo -create "$arm_file" "$x86_file" -output "$target_file"
             fi
           done
 
-          # Ensure main launcher binary is executable
-          chmod +x "$UNI_APP/Contents/MacOS/Deluge"
+          # 4. Fix Resources duplicate binaries (Convert physical duplicates back to Symlinks)
+          echo "=== Re-linking duplicated binaries in Resources ==="
+          find "$FINAL_APP/Contents/Resources" -type f 2>/dev/null | while read -r res_file; do
+            filename=$(basename "$res_file")
+            fw_file="$FINAL_APP/Contents/Frameworks/$filename"
+
+            # If a physical file in Resources mirrors a binary in Frameworks, replace with relative symlink
+            if [ -f "$fw_file" ] && file "$res_file" | grep -q "Mach-O"; then
+              rel_target=$(python3 -c "import os.path; print(os.path.relpath('$fw_file', '$(dirname "$res_file")'))")
+              rm -f "$res_file"
+              ln -s "$rel_target" "$res_file"
+            fi
+          done
+
+          # 5. Clean non-Mach-O loose data out of Frameworks (leaving symlinks intact)
+          find "$FINAL_APP/Contents/Frameworks" -type f ! -L 2>/dev/null | while read -r file; do
+            if ! file "$file" | grep -q "Mach-O"; then
+              rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
+              target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
+              mkdir -p "$(dirname "$target_file")"
+              mv "$file" "$target_file"
+            fi
+          done
 
       - name: Import Apple Developer Certificate
         env:
@@ -339,93 +361,71 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Check executable size (should be small, ~300KB to ~2MB)
-          ls -lh dist/Deluge.app/Contents/MacOS/Deluge
-
-          # 2. Check for PyInstaller arch header magic inside the binary
-          strings dist/Deluge.app/Contents/MacOS/Deluge | grep -E "MEIPASS|base_library"
-
           # Verify bundle output exists
           if [ ! -d "$FINAL_APP/Contents" ]; then
-            echo "Error: $FINAL_APP/Contents does not exist. Check PyInstaller output in 'dist/'!"
-            ls -la "$GITHUB_WORKSPACE/dist"
+            echo "Error: $FINAL_APP/Contents does not exist. Check assembly step!"
             exit 1
           fi
 
-          # 1. Relocate base_library.zip to Resources & bridge back with a Symlink
-          mkdir -p "$FINAL_APP/Contents/Resources"
+          # 1. Ensure main launcher binary is strictly executable
+          chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
+          ls -lh "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 2. Relocate all other non-Mach-O data files out of Frameworks
+          # 2. Clean loose non-Mach-O data files out of Frameworks (ignoring symlinks)
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
             echo "=== Cleaning non-Mach-O data files out of Frameworks ==="
-            find "$FINAL_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r file; do
-              # Skip symlinks (like base_library.zip link)
-              if [ -L "$file" ]; then
-                continue
-              fi
-
+            find "$FINAL_APP/Contents/Frameworks" -type f ! -L 2>/dev/null | while read -r file; do
               if ! file "$file" | grep -q "Mach-O"; then
                 rel_path="${file#$FINAL_APP/Contents/Frameworks/}"
                 target_file="$FINAL_APP/Contents/Resources/Frameworks_data/$rel_path"
                 mkdir -p "$(dirname "$target_file")"
-                cp -f "$file" "$target_file"
-                rm -f "$file"
+                echo "Moving non-binary data: $rel_path"
+                mv -f "$file" "$target_file"
               fi
             done
 
+            # Remove empty folders left behind
             find "$FINAL_APP/Contents/Frameworks" -type d -empty -delete 2>/dev/null
           fi
 
-          # 2. Flatten Python.framework AND move raw python script folders out of Frameworks
-          find "$FINAL_APP" -type d -name "Python.framework" 2>/dev/null | while read -r py_fw; do
-            echo "=== Stripping Python.framework shell: $py_fw ==="
-            PY_BIN=$(find "$py_fw" -name "Python" -type f | head -n 1)
-            TARGET_DIR=$(dirname "$py_fw")
-            LIB_NAME="libpython3.11.dylib"
-
-            if [ -n "$PY_BIN" ]; then
-              cp "$PY_BIN" "$TARGET_DIR/$LIB_NAME"
-            fi
-            rm -rf "$py_fw"
-          done
-
-          # Move raw python stdlib directories out of Frameworks to stop codesign from choking
+          # 3. Move raw python stdlib directories out of Frameworks if present
           if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
             find "$FINAL_APP/Contents/Frameworks" -mindepth 1 -maxdepth 1 -type d -name "python*" 2>/dev/null | while read -r py_dir; do
               dirname=$(basename "$py_dir")
               echo "=== Moving raw python folder $dirname to Resources ==="
-              cp -R "$py_dir" "$FINAL_APP/Contents/Resources/$dirname"
-              rm -rf "$py_dir"
+              mkdir -p "$FINAL_APP/Contents/Resources"
+              mv -f "$py_dir" "$FINAL_APP/Contents/Resources/$dirname"
             done
           fi
 
-          # 3. Sign ONLY Mach-O binaries (skipping symlinks and main launcher)
-          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f 2>/dev/null | while read -r file; do
-            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ] || [ -L "$file" ]; then
+          # 4. Sign ONLY physical Mach-O binaries (skipping symlinks and main launcher)
+          echo "=== Signing Inner Mach-O Binaries ==="
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" "$FINAL_APP/Contents/MacOS" -type f ! -L 2>/dev/null | while read -r file; do
+            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               continue
             fi
 
             if file "$file" | grep -q "Mach-O"; then
-              echo "=== Signing Mach-O Binary: $file ==="
+              echo "Signing Binary: $file"
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
             fi
           done
 
-          # 4. Sign Main Executable with Entitlements
+          # 5. Sign Main Executable with Entitlements
           echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Sign Outer Application Bundle
+          # 6. Sign Outer Application Bundle
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Verification
+          # 7. Verification
           echo "=== Verifying Bundle Signature ==="
           codesign --verify --verbose=4 --strict "$FINAL_APP"
 
