@@ -267,14 +267,6 @@ jobs:
       - name: Install Packaging Tools
         run: brew install create-dmg
 
-      - name: Debug App Structure
-        run: |
-          echo "=== Contents of MacOS/ ==="
-          ls -la builds/arm64/Deluge.app/Contents/MacOS/
-
-          echo "=== Searching for Python ZIP or PKG archives ==="
-          find builds/arm64/Deluge.app -name "*.zip" -o -name "*.pkg"
-
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           # 1. Unpack thin apps preserving symlinks
