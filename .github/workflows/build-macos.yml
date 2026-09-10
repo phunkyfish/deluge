@@ -362,16 +362,17 @@ jobs:
 
           echo "Total regular file nodes: $TOTAL_FILES"
           echo "Total symlinks: $TOTAL_SYMLINKS"
-          echo "Physical non-symlink files: $PHYSICAL_NON_SYMLINKS"
+          echo "Physical files: $PHYSICAL_FILES"
 
           echo "=== 3. Locating ALL Mach-O Binaries in Bundle ==="
           MACHO_COUNT=0
-          find "$FINAL_APP/Contents" -type f | while read -r file; do
+          # Use process substitution to avoid losing variables in a subshell pipeline
+          while read -r file; do
             if file -b "$file" | grep -q "Mach-O"; then
               echo "Found Mach-O: ${file#$FINAL_APP/}"
               MACHO_COUNT=$((MACHO_COUNT + 1))
             fi
-          done
+          done < <(find "$FINAL_APP/Contents" -type f)
 
           echo "Mach-O files: $MACHO_COUNT"
 
