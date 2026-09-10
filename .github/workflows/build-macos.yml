@@ -358,7 +358,7 @@ jobs:
           echo "=== 2. Auditing Regular Files vs Symlinks ==="
           TOTAL_FILES=$(find "$FINAL_APP/Contents" -type f | wc -l | xargs)
           TOTAL_SYMLINKS=$(find "$FINAL_APP/Contents" -type l | wc -l | xargs)
-          PHYSICAL_NON_SYMLINKS=$(find "$FINAL_APP/Contents" -type f ! -L | wc -l | xargs)
+          PHYSICAL_FILES=$(find "$FINAL_APP/Contents" -type f ! -type l | wc -l | xargs)
 
           echo "Total regular file nodes: $TOTAL_FILES"
           echo "Total symlinks: $TOTAL_SYMLINKS"
@@ -372,6 +372,8 @@ jobs:
               MACHO_COUNT=$((MACHO_COUNT + 1))
             fi
           done
+
+          echo "Mach-O files: $MACHO_COUNT"
 
           echo "=== 4. Testing Symlink Target Resolutions ==="
           BROKEN_LINKS=$(find "$FINAL_APP/Contents" -type l ! -exec test -e {} \; -print)
@@ -429,20 +431,33 @@ jobs:
           # 1. Ensure executable permissions
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 2. Sign ALL physical Mach-O binaries in the bundle (skipping symlinks & main launcher)
+          # 2. Sign ALL physical Mach-O binaries (Bottom-Up)
           echo "=== Signing Inner Mach-O Binaries ==="
-          find "$FINAL_APP/Contents" -type f ! -L 2>/dev/null | while read -r file; do
+          SIGNED_COUNT=0
+
+          # Use BSD-compatible find flags for physical regular files (skipping symlinks)
+          while read -r file; do
+            # Skip main launcher executable (signed separately with entitlements)
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               continue
             fi
 
-            if file "$file" | grep -q "Mach-O"; then
-              echo "Signing inner binary: $file"
+            # Check if file is a Mach-O binary
+            if file -b "$file" | grep -q "Mach-O"; then
+              echo "Signing inner binary: ${file#$FINAL_APP/}"
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
+              SIGNED_COUNT=$((SIGNED_COUNT + 1))
             fi
-          done
+          done < <(find "$FINAL_APP/Contents" -type f ! -type l)
+
+          echo "Successfully signed $SIGNED_COUNT inner Mach-O binaries."
+
+          if [ "$SIGNED_COUNT" -eq 0 ]; then
+            echo "Error: Zero inner binaries were signed!"
+            exit 1
+          fi
 
           # 3. Sign Main Executable with Entitlements
           echo "=== Signing Main Executable ==="
