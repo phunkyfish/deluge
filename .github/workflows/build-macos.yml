@@ -341,6 +341,48 @@ jobs:
             done
           fi
 
+      - name: Audit Universal2 Bundle Structure & Mach-O Files
+        run: |
+          echo "=== 1. Checking Application Directory Tree ==="
+          ls -la "$FINAL_APP"
+          ls -la "$FINAL_APP/Contents"
+          ls -la "$FINAL_APP/Contents/MacOS"
+
+          if [ -d "$FINAL_APP/Contents/Frameworks" ]; then
+            echo "=== Frameworks Directory Found ==="
+            ls -la "$FINAL_APP/Contents/Frameworks" | head -n 20
+          else
+            echo "WARNING: Contents/Frameworks DOES NOT EXIST!"
+          fi
+
+          echo "=== 2. Auditing Regular Files vs Symlinks ==="
+          TOTAL_FILES=$(find "$FINAL_APP/Contents" -type f | wc -l | xargs)
+          TOTAL_SYMLINKS=$(find "$FINAL_APP/Contents" -type l | wc -l | xargs)
+          PHYSICAL_NON_SYMLINKS=$(find "$FINAL_APP/Contents" -type f ! -L | wc -l | xargs)
+
+          echo "Total regular file nodes: $TOTAL_FILES"
+          echo "Total symlinks: $TOTAL_SYMLINKS"
+          echo "Physical non-symlink files: $PHYSICAL_NON_SYMLINKS"
+
+          echo "=== 3. Locating ALL Mach-O Binaries in Bundle ==="
+          MACHO_COUNT=0
+          find "$FINAL_APP/Contents" -type f | while read -r file; do
+            if file -b "$file" | grep -q "Mach-O"; then
+              echo "Found Mach-O: ${file#$FINAL_APP/}"
+              MACHO_COUNT=$((MACHO_COUNT + 1))
+            fi
+          done
+
+          echo "=== 4. Testing Symlink Target Resolutions ==="
+          BROKEN_LINKS=$(find "$FINAL_APP/Contents" -type l ! -exec test -e {} \; -print)
+          if [ -n "$BROKEN_LINKS" ]; then
+            echo "ERROR: Found broken symlinks inside bundle!"
+            echo "$BROKEN_LINKS"
+            exit 1
+          else
+            echo "All symlinks resolve cleanly to valid targets."
+          fi
+
       - name: Import Apple Developer Certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
