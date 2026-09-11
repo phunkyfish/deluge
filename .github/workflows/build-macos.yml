@@ -256,11 +256,23 @@ jobs:
         with:
           python-version: "3.11"
 
+
       - name: Install PyInstaller and Spec Build Dependencies
         run: |
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
           python3 -m pip install "Cython<3.0" poetry-core pygobject pycairo
-          python3 -m pip install -e .
+
+          # Resolve version file just like in Job 1/2 to avoid version.py errors
+          if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
+            APP_VERSION="${GITHUB_REF_NAME#deluge-}"
+          else
+            APP_VERSION="2.2.0"
+          fi
+          find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
+
+          # Install deluge in editable mode without build isolation
+          python3 -m pip install --no-build-isolation --no-deps -e .
+
 
       - name: Download Thin App Artifacts for Intel and Arm64
         uses: actions/download-artifact@v4
