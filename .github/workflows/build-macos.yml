@@ -245,6 +245,11 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Git Tags Explicitly
+        run: git fetch --tags --force
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
