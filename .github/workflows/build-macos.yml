@@ -295,7 +295,7 @@ jobs:
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           # 1. Clean workspace and prepare extraction targets
-          rm -rf "$FINAL_APP" /tmp/arm64 /tmp/x86_64
+          rm -rf "$FINAL_APP" /tmp/arm64 /tmp/x86_64 "$GITHUB_WORKSPACE/dist/tmp_launcher"
           mkdir -p "$GITHUB_WORKSPACE/dist" /tmp/arm64 /tmp/x86_64
 
           # 2. Extract tarballs
@@ -317,24 +317,29 @@ jobs:
           # 3. Establish base structure from ARM64 build
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Stitch Main Launcher Executable
-          echo "=== Stitching Universal2 Launcher Executable ==="
-          lipo -create \
-            "$ARM_APP/Contents/MacOS/Deluge" \
-            "$X86_APP/Contents/MacOS/Deluge" \
-            -output "$FINAL_APP/Contents/MacOS/Deluge"
+          # 4. Generate native Universal2 main executable via PyInstaller (replaces lipo on launcher)
+          echo "=== Building Native Universal2 Launcher Executable ==="
+          pyinstaller --target-architecture universal2 \
+            --noconfirm \
+            --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
+            Deluge.spec
+
+          echo "=== Overwriting Base Launcher with Universal2 Executable ==="
+          cp "$GITHUB_WORKSPACE/dist/tmp_launcher/Deluge.app/Contents/MacOS/Deluge" \
+             "$FINAL_APP/Contents/MacOS/Deluge"
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
+          rm -rf "$GITHUB_WORKSPACE/dist/tmp_launcher"
 
           # 5. Lipo-stitch Mach-O C-extensions and Frameworks
           echo "=== Merging C-extensions and Frameworks via lipo ==="
           if [ -d "$ARM_APP/Contents/Frameworks" ]; then
-            find "$ARM_APP/Contents/Frameworks" -type f 2>/dev/null | while read -r arm_file; do
+            find "$ARM_APP/Contents/Frameworks" -type f ! -type l 2>/dev/null | while read -r arm_file; do
               rel_path="${arm_file#$ARM_APP/Contents/Frameworks/}"
               x86_file="$X86_APP/Contents/Frameworks/$rel_path"
               target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
 
-              if [ -f "$x86_file" ] && file "$arm_file" | grep -q "Mach-O"; then
+              if [ -f "$x86_file" ] && file -b "$arm_file" | grep -q "Mach-O"; then
                 echo "Lipo merging: $rel_path"
                 lipo -create "$arm_file" "$x86_file" -output "$target_file"
               fi
@@ -380,13 +385,13 @@ jobs:
 
           echo "=== 3. Locating ALL Mach-O Binaries in Bundle ==="
           MACHO_COUNT=0
-          # Use process substitution to avoid losing variables in a subshell pipeline
+          # Exclude symlinks here so 'file' evaluates real physical binaries only
           while read -r file; do
             if file -b "$file" | grep -q "Mach-O"; then
               echo "Found Mach-O: ${file#$FINAL_APP/}"
               MACHO_COUNT=$((MACHO_COUNT + 1))
             fi
-          done < <(find "$FINAL_APP/Contents" -type f)
+          done < <(find "$FINAL_APP/Contents" -type f ! -type l)
 
           echo "Mach-O files: $MACHO_COUNT"
 
