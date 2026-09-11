@@ -64,20 +64,15 @@ jobs:
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
 
           # 2. Pre-install build dependencies directly into the main environment
-          # Install build backends and pinned Cython directly into the environment
           python3 -m pip install "setuptools==81.0.0" "Cython<3.0" poetry-core wheel
 
           git clone --quiet https://github.com/aresch/rencode.git
           cd rencode
           git checkout --quiet e7ec8ea718e73a8fee7dbc007c262e1584f7f94b
-          # Build rencode WITHOUT build isolation and strip processor-specific SSE flags
           ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation .
           cd -
 
-          # 1. Ensure PyGObject, PyCairo, and Deluge are fully installed in the build environment
           python3 -m pip install pygobject pycairo
-
-          # Install deluge and remaining dependencies
           ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install .
 
           # Extract libtorrent bindings from Homebrew
@@ -175,15 +170,11 @@ jobs:
             done
           done
 
-          # 2. Export dynamic library search paths so PyInstaller child processes can resolve GI typelibs
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$BREW_PREFIX/opt/gtk+3/lib:$BREW_PREFIX/opt/pango/lib:$BREW_PREFIX/opt/cairo/lib:$BREW_PREFIX/opt/glib/lib:$DYLD_LIBRARY_PATH"
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_FALLBACK_LIBRARY_PATH"
-
-          # 2. Add Homebrew binaries to PATH so PyInstaller can execute g-ir-compiler
           export PATH="$BREW_PREFIX/bin:$PATH"
 
           # 6. Generate spec file and compile thin app
-          # 1. Generate initial spec file
           pyi-makespec --onedir --windowed --name="Deluge" \
             -d noarchive \
             --runtime-hook=fix_pkgres_hook.py \
@@ -206,16 +197,8 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 3. Build the app bundle from the  spec file
           pyinstaller --clean Deluge.spec
 
-          echo "=== Workspace Directory Contents ==="
-          ls -la "$GITHUB_WORKSPACE"
-
-          echo "=== Dist Directory Contents ==="
-          ls -la "$GITHUB_WORKSPACE/dist" || echo "dist directory does not exist!"
-
-          # 3. Inject minimal resources (skip heavy locale translations)
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
           mkdir -p "$APP_RESOURCES/girepository-1.0" "$APP_RESOURCES/share/glib-2.0/schemas" "$APP_RESOURCES/share/icons"
 
@@ -223,10 +206,9 @@ jobs:
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # Copy icon directories without SVG sources where possible
           [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
 
-          # 4. STRIP BINARIES (Major Size Reduction Step)
+          # 4. STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" \) | while read -r bin; do
             strip -x "$bin" 2>/dev/null || true
@@ -237,17 +219,12 @@ jobs:
 
       - name: Archive Thin App (Preserving Symlinks)
         run: |
-          echo "=== Archiving dist/Deluge.app into tar.gz ==="
-          # Check that PyInstaller actually produced Deluge.app first
           if [ ! -d "dist/Deluge.app" ]; then
             echo "Error: dist/Deluge.app does not exist before archiving!"
             exit 1
           fi
 
-          # Create clean tarball preserving symlinks (-h is NOT used so symlinks remain symlinks)
           tar -czvf "deluge-${{ matrix.arch }}.tar.gz" -C dist Deluge.app
-
-          # Verify non-zero file size
           ls -lh "deluge-${{ matrix.arch }}.tar.gz"
 
       - name: Upload Thin App Build
@@ -268,6 +245,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller and Spec Build Dependencies
+        run: |
+          python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
+          python3 -m pip install "Cython<3.0" poetry-core pygobject pycairo
+          python3 -m pip install -e .
 
       - name: Download Thin App Artifacts for Intel and Arm64
         uses: actions/download-artifact@v4
@@ -317,9 +305,9 @@ jobs:
           # 3. Establish base structure from ARM64 build
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Generate native Universal2 main executable via PyInstaller (replaces lipo on launcher)
+          # 4. Generate native Universal2 main executable via PyInstaller
           echo "=== Building Native Universal2 Launcher Executable ==="
-          pyinstaller --target-architecture universal2 \
+          python3 -m PyInstaller --target-architecture universal2 \
             --noconfirm \
             --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
             Deluge.spec
@@ -385,7 +373,6 @@ jobs:
 
           echo "=== 3. Locating ALL Mach-O Binaries in Bundle ==="
           MACHO_COUNT=0
-          # Exclude symlinks here so 'file' evaluates real physical binaries only
           while read -r file; do
             if file -b "$file" | grep -q "Mach-O"; then
               echo "Found Mach-O: ${file#$FINAL_APP/}"
@@ -448,21 +435,16 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          # 1. Ensure executable permissions
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 2. Sign ALL physical Mach-O binaries (Bottom-Up)
           echo "=== Signing Inner Mach-O Binaries ==="
           SIGNED_COUNT=0
 
-          # Use BSD-compatible find flags for physical regular files (skipping symlinks)
           while read -r file; do
-            # Skip main launcher executable (signed separately with entitlements)
             if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               continue
             fi
 
-            # Check if file is a Mach-O binary
             if file -b "$file" | grep -q "Mach-O"; then
               echo "Signing inner binary: ${file#$FINAL_APP/}"
               codesign --force --options runtime --timestamp \
@@ -479,19 +461,16 @@ jobs:
             exit 1
           fi
 
-          # 3. Sign Main Executable with Entitlements
           echo "=== Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 4. Sign Outer Application Bundle Envelope
           echo "=== Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 5. Verify Signature relative to dist/ directory
           echo "=== Verifying Bundle Signature ==="
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
@@ -518,12 +497,11 @@ jobs:
           echo "RESOLVED_APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
           DMG_FILE="Deluge-${APP_VERSION}-Universal.dmg"
 
-          # Clear and stage clean app bundle
-          rm -rf secure_dmg_staging
+          # Clear previous artifacts and create clean staging directory
+          rm -rf secure_dmg_staging "$DMG_FILE"
           mkdir -p secure_dmg_staging
           ditto "$GITHUB_WORKSPACE/dist/Deluge.app" secure_dmg_staging/Deluge.app
 
-          # Create DMG (allow exit code 2 for headless runner layout notices)
           create-dmg \
             --volname "Deluge Universal Installer" \
             --window-pos 200 120 \
@@ -539,7 +517,6 @@ jobs:
             exit 1
           fi
 
-          # Sign the outer DMG container
           codesign --force --options runtime --timestamp \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
             --keychain build.keychain "$DMG_FILE"
@@ -579,4 +556,3 @@ jobs:
         with:
           name: Deluge-macOS-Universal
           path: Deluge-*-Universal.dmg
-
