@@ -217,21 +217,12 @@ jobs:
           # 5. Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
-      - name: Archive Thin App (Preserving Symlinks)
-        run: |
-          if [ ! -d "dist/Deluge.app" ]; then
-            echo "Error: dist/Deluge.app does not exist before archiving!"
-            exit 1
-          fi
-
-          tar -czvf "deluge-${{ matrix.arch }}.tar.gz" -C dist Deluge.app
-          ls -lh "deluge-${{ matrix.arch }}.tar.gz"
-
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: deluge-${{ matrix.arch }}.tar.gz
+          path: dist/Deluge.app
+          include-hidden-files: true
 
   # ====================================================================
   # JOB 3: Merge Architecture Artifacts into Universal 2
@@ -256,7 +247,6 @@ jobs:
         with:
           python-version: "3.11"
 
-
       - name: Install PyInstaller and Spec Build Dependencies
         run: |
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
@@ -272,6 +262,49 @@ jobs:
 
           # Install deluge in editable mode without build isolation
           python3 -m pip install --no-build-isolation --no-deps -e .
+
+      - name: Download Thin App Artifacts for Intel and Arm64
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deluge-thin-*
+          path: /tmp/thin_builds
+          merge-multiple: true
+
+      - name: Inspect Downloaded App Bundles
+        run: |
+          echo "=== Checking Downloaded App Paths ==="
+          ls -la /tmp/thin_builds/deluge-thin-arm64
+          ls -la /tmp/thin_builds/deluge-thin-x86_64
+
+          echo "=== Verifying Symlinks Preserved in ARM64 Artifact ==="
+          find /tmp/thin_builds/deluge-thin-arm64/Deluge.app -type l | head -n 5 || echo "No symlinks found"
+
+      - name: Install Packaging Tools
+        run: brew install create-dmg
+
+      - name: Stitch Thin Architectures into Universal2 Bundle
+        run: |
+          # 1. Clean workspace
+          rm -rf "$FINAL_APP" "$GITHUB_WORKSPACE/dist/tmp_launcher"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+
+          # 2. Point directly to downloaded app bundles
+          ARM_APP="/tmp/thin_builds/deluge-thin-arm64/Deluge.app"
+          X86_APP="/tmp/thin_builds/deluge-thin-x86_64/Deluge.app"
+
+          if [ ! -d "$ARM_APP" ] || [ ! -d "$X86_APP" ]; then
+            echo "Error: Failed to locate Deluge.app in downloaded artifacts!"
+            exit 1
+          fi
+
+          echo "Found ARM app at: $ARM_APP"
+          echo "Found x86 app at: $X86_APP"
+
+          # 3. Establish base structure from ARM64 build
+          cp -a "$ARM_APP" "$FINAL_APP"
+
+
+
 
 
       - name: Download Thin App Artifacts for Intel and Arm64
