@@ -268,7 +268,6 @@ jobs:
         with:
           pattern: deluge-thin-*
           path: /tmp/thin_builds
-          merge-multiple: true
 
       - name: Inspect Downloaded App Bundles
         run: |
@@ -294,58 +293,6 @@ jobs:
 
           if [ ! -d "$ARM_APP" ] || [ ! -d "$X86_APP" ]; then
             echo "Error: Failed to locate Deluge.app in downloaded artifacts!"
-            exit 1
-          fi
-
-          echo "Found ARM app at: $ARM_APP"
-          echo "Found x86 app at: $X86_APP"
-
-          # 3. Establish base structure from ARM64 build
-          cp -a "$ARM_APP" "$FINAL_APP"
-
-
-
-
-
-      - name: Download Thin App Artifacts for Intel and Arm64
-        uses: actions/download-artifact@v4
-        with:
-          pattern: deluge-thin-*
-          path: builds
-          merge-multiple: true
-
-      - name: Inspect Downloaded Artifacts
-        run: |
-          echo "=== Checking Downloaded Files in builds/ ==="
-          ls -la builds/
-
-          echo "=== Testing Arm64 Tarball Integrity ==="
-          file builds/deluge-arm64.tar.gz || true
-          tar -ztvf builds/deluge-arm64.tar.gz | head -n 20 || echo "FAILED TO READ ARM64 TARBALL!"
-
-          echo "=== Testing x86_64 Tarball Integrity ==="
-          file builds/deluge-x86_64.tar.gz || true
-          tar -ztvf builds/deluge-x86_64.tar.gz | head -n 20 || echo "FAILED TO READ X86_64 TARBALL!"
-
-      - name: Install Packaging Tools
-        run: brew install create-dmg
-
-      - name: Stitch Thin Architectures into Universal2 Bundle
-        run: |
-          # 1. Clean workspace and prepare extraction targets
-          rm -rf "$FINAL_APP" /tmp/arm64 /tmp/x86_64 "$GITHUB_WORKSPACE/dist/tmp_launcher"
-          mkdir -p "$GITHUB_WORKSPACE/dist" /tmp/arm64 /tmp/x86_64
-
-          # 2. Extract tarballs
-          tar -xzf builds/deluge-arm64.tar.gz -C /tmp/arm64
-          tar -xzf builds/deluge-x86_64.tar.gz -C /tmp/x86_64
-
-          # Resolve physical app location inside extraction directories
-          ARM_APP=$(find /tmp/arm64 -name "Deluge.app" -type d | head -n 1)
-          X86_APP=$(find /tmp/x86_64 -name "Deluge.app" -type d | head -n 1)
-
-          if [ -z "$ARM_APP" ] || [ -z "$X86_APP" ]; then
-            echo "Error: Failed to locate Deluge.app in extracted tarballs!"
             exit 1
           fi
 
