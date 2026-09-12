@@ -325,27 +325,23 @@ jobs:
           # 4. Generate native Universal2 main executable via PyInstaller
           echo "=== Building Native Universal2 Launcher Executable ==="
 
-          # Re-generate spec target for universal2 launcher
-          python3 -m PyInstaller --noconfirm \
-            --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
+          cat <<'EOF' > run_deluge.py
+          if __name__ == '__main__':
+              pass
+          EOF
+
+          python3 -m PyInstaller --onedir --windowed --name="Deluge" \
             --target-architecture universal2 \
-            Deluge.spec || \
-          (
-            # Fallback: If pyinstaller rejects flag with .spec, patch target_arch in Deluge.spec dynamically
-            sed -i '' "s/target_arch=None/target_arch='universal2'/g" Deluge.spec
-            sed -i '' "s/target_arch='x86_64'/target_arch='universal2'/g" Deluge.spec
-            sed -i '' "s/target_arch='arm64'/target_arch='universal2'/g" Deluge.spec
-            python3 -m PyInstaller --noconfirm \
-              --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
-              Deluge.spec
-          )
+            --noconfirm \
+            --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
+            run_deluge.py
 
           echo "=== Overwriting Base Launcher with Universal2 Executable ==="
           cp "$GITHUB_WORKSPACE/dist/tmp_launcher/Deluge.app/Contents/MacOS/Deluge" \
              "$FINAL_APP/Contents/MacOS/Deluge"
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
-          rm -rf "$GITHUB_WORKSPACE/dist/tmp_launcher"
+          rm -rf "$GITHUB_WORKSPACE/dist/tmp_launcher" run_deluge.py
 
           # 5. Lipo-stitch Mach-O C-extensions and Frameworks
           echo "=== Merging C-extensions and Frameworks via lipo ==="
