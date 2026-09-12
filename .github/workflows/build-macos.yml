@@ -497,40 +497,35 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 1. Clean up misleading framework metadata
-          echo "=== 1. Cleaning Framework Metadata ==="
-          find "$FINAL_APP/Contents" -path "*/Python.framework/*" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
+          # 1. Repair Python.framework structure to satisfy codesign
+          echo "=== 1. Repairing Framework Structure for codesign ==="
+          FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks/Python.framework"
 
-          # 2. Locate and isolate embedded Python framework binary dynamically
-          echo "=== 2. Locating & Signing Embedded Python Binary ==="
-          PYTHON_BIN=$(find "$FINAL_APP/Contents" -path "*/Python.framework/Python" -type f ! -type l | head -n 1)
+          if [ -d "$FRAMEWORK_DIR" ]; then
+            # Strip invalid Info.plist files that trigger bundle format errors
+            find "$FRAMEWORK_DIR" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
 
-          if [ -n "$PYTHON_BIN" ] && [ -f "$PYTHON_BIN" ]; then
-            echo "Found Python binary at: ${PYTHON_BIN#$FINAL_APP/}"
-
-            # Isolate outside .framework path so codesign treats it as raw Mach-O
-            mv "$PYTHON_BIN" /tmp/Python_tmp
-            codesign --force --options runtime --timestamp \
-              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-              --keychain build.keychain /tmp/Python_tmp
-            mv /tmp/Python_tmp "$PYTHON_BIN"
-
-            echo "Successfully signed Python framework binary."
-          else
-            echo "Notice: No embedded Python.framework binary found to isolate."
+            # Create standard macOS Framework layout if missing
+            mkdir -p "$FRAMEWORK_DIR/Versions/A"
+            if [ -f "$FRAMEWORK_DIR/Python" ] && [ ! -L "$FRAMEWORK_DIR/Python" ]; then
+              mv "$FRAMEWORK_DIR/Python" "$FRAMEWORK_DIR/Versions/A/Python"
+              ln -sf "Versions/A/Python" "$FRAMEWORK_DIR/Python"
+              ln -sf "A" "$FRAMEWORK_DIR/Versions/Current"
+            fi
           fi
 
-          # 3. Sign All Other Internal Mach-O Binaries (.dylib, .so)
-          echo "=== 3. Signing Dynamic Libraries and C-Extensions ==="
+          # 2. Sign All Internal Mach-O Binaries (.dylib, .so, Framework Binaries)
+          echo "=== 2. Signing Dynamic Libraries and Mach-O Binaries ==="
           FILES_TO_SIGN=$(mktemp)
           find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
           SIGNED_COUNT=0
           while read -r file; do
-            # Skip launcher and the Python binary (already signed above if present)
-            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ] && [ "$file" != "$PYTHON_BIN" ]; then
+            # Skip main executable for step 3
+            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               if file -b "$file" | grep -q "Mach-O"; then
                 codesign --force --options runtime --timestamp \
+                  --preserve-metadata=identifier,flags,entitlements \
                   --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                   --keychain build.keychain "$file"
                 SIGNED_COUNT=$((SIGNED_COUNT + 1))
@@ -541,20 +536,20 @@ jobs:
 
           echo "Signed $SIGNED_COUNT internal dynamic libraries."
 
-          # 4. Sign Main Executable with Entitlements
-          echo "=== 4. Signing Main Executable ==="
+          # 3. Sign Main Executable with Entitlements
+          echo "=== 3. Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Sign Outer Application Bundle Envelope
-          echo "=== 5. Signing Outer Application Bundle ==="
+          # 4. Sign Outer Application Bundle Envelope
+          echo "=== 4. Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Verify Signature
-          echo "=== 6. Verifying Bundle Signature ==="
+          # 5. Verify Signature
+          echo "=== 5. Verifying Bundle Signature ==="
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
 
