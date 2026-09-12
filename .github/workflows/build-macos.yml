@@ -217,11 +217,16 @@ jobs:
           # 5. Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
+      - name: Archive Thin App Bundle (Preserves Symlinks)
+        run: |
+          cd dist
+          tar -cf "../deluge-thin-${{ matrix.arch }}.tar" Deluge.app
+
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: dist/Deluge.app
+          path: deluge-thin-${{ matrix.arch }}.tar
           include-hidden-files: true
 
   # ====================================================================
@@ -263,38 +268,36 @@ jobs:
           # Install deluge in editable mode without build isolation
           python3 -m pip install --no-build-isolation --no-deps -e .
 
-      - name: Download Thin App Artifacts for Intel and Arm64
+      - name: Download Thin App Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: deluge-thin-*
           path: /tmp/thin_builds
+
+      - name: Extract Thin App Bundles
+        run: |
+          mkdir -p /tmp/thin_builds/arm64_extracted
+          mkdir -p /tmp/thin_builds/x86_extracted
+
+          # Extract archives
+          tar -xf /tmp/thin_builds/deluge-thin-arm64/deluge-thin-arm64.tar -C /tmp/thin_builds/arm64_extracted
+          tar -xf /tmp/thin_builds/deluge-thin-x86_64/deluge-thin-x86_64.tar -C /tmp/thin_builds/x86_extracted
 
       - name: Verify Artifact Symlinks and Sizes
         run: |
-          echo "=== Symlink Inventory in Downloaded ARM64 Build ==="
-          # 1. Count explicit symlinks versus regular files in Frameworks
-          SYMLINK_COUNT=$(find /tmp/thin_builds/deluge-thin-arm64/Contents -type l | wc -l)
-          REGULAR_FILE_COUNT=$(find /tmp/thin_builds/deluge-thin-arm64/Contents -type f | wc -l)
+          ARM_APP="/tmp/thin_builds/arm64_extracted/Deluge.app"
+
+          echo "=== Symlink Inventory in Extracted ARM64 Build ==="
+          SYMLINK_COUNT=$(find "$ARM_APP/Contents" -type l | wc -l)
+          REGULAR_FILE_COUNT=$(find "$ARM_APP/Contents" -type f | wc -l)
 
           echo "Total Symlinks: $SYMLINK_COUNT"
           echo "Total Regular Files: $REGULAR_FILE_COUNT"
 
-          echo "=== Checking Specific Dynamic Library Aliases ==="
-          # 2. Inspect a known framework alias (e.g. Python or glib aliases)
-          ls -la /tmp/thin_builds/deluge-thin-arm64/Contents/Frameworks/ || true
+          echo "=== Sample Symlink Aliases in Frameworks ==="
+          find "$ARM_APP/Contents" -type l | head -n 5 || echo "No symlinks found"
 
-          # 3. Check disk usage breakdown
-          echo "=== Top 10 Largest Files in Downloaded Artifact ==="
-          find /tmp/thin_builds/deluge-thin-arm64/Contents -type f -exec du -h {} + | sort -rh | head -n 10
-
-      - name: Inspect Downloaded App Bundles
-        run: |
-          echo "=== Checking Downloaded App Paths ==="
-          ls -la /tmp/thin_builds/deluge-thin-arm64
-          ls -la /tmp/thin_builds/deluge-thin-x86_64
-
-          echo "=== Verifying Symlinks Preserved in ARM64 Artifact ==="
-          find /tmp/thin_builds/deluge-thin-arm64/Contents -type l | head -n 5 || echo "No symlinks found"
+          echo "=== App Bundle Disk Usage ==="
+          du -sh "$ARM_APP"
 
       - name: Install Packaging Tools
         run: brew install create-dmg
@@ -305,21 +308,20 @@ jobs:
           rm -rf "$FINAL_APP" "$GITHUB_WORKSPACE/dist/tmp_launcher"
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          # 2. Point directly to downloaded app bundle root paths
-          ARM_APP="/tmp/thin_builds/deluge-thin-arm64"
-          X86_APP="/tmp/thin_builds/deluge-thin-x86_64"
+          # 2. Point directly to extracted Deluge.app bundles
+          ARM_APP="/tmp/thin_builds/arm64_extracted/Deluge.app"
+          X86_APP="/tmp/thin_builds/x86_extracted/Deluge.app"
 
-          if [ ! -d "$ARM_APP/Contents" ] || [ ! -d "$X86_APP/Contents" ]; then
-            echo "Error: Failed to locate Contents directory in downloaded artifacts!"
+          if [ ! -d "$ARM_APP" ] || [ ! -d "$X86_APP" ]; then
+            echo "Error: Failed to locate Deluge.app in extracted archives!"
             exit 1
           fi
 
-          echo "Found ARM app contents at: $ARM_APP"
-          echo "Found x86 app contents at: $X86_APP"
+          echo "Found ARM app at: $ARM_APP"
+          echo "Found x86 app at: $X86_APP"
 
-          # 3. Establish base structure from ARM64 build into $FINAL_APP (/dist/Deluge.app)
-          mkdir -p "$FINAL_APP"
-          cp -a "$ARM_APP/." "$FINAL_APP/"
+          # 3. Establish base structure from ARM64 build into dist/Deluge.app
+          cp -a "$ARM_APP" "$FINAL_APP"
 
           # 4. Generate native Universal2 main executable via PyInstaller
           echo "=== Building Native Universal2 Launcher Executable ==="
