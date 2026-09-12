@@ -439,21 +439,22 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 1. Clean up misleading framework metadata
+          # 1. Clean up misleading framework metadata in Frameworks directory
           echo "=== 1. Cleaning Framework Metadata ==="
-          find "$FINAL_APP/Contents/Resources/Python.framework" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
+          find "$FINAL_APP/Contents/Frameworks/Python.framework" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
 
-          # 2. Workaround for Python.framework binary
+          # 2. Isolate and sign the Python.framework binary
           echo "=== 2. Signing Embedded Python Binary ==="
-          PYTHON_BIN="$FINAL_APP/Contents/Resources/Python.framework/Python"
+          PYTHON_BIN="$FINAL_APP/Contents/Frameworks/Python.framework/Python"
           if [ -f "$PYTHON_BIN" ]; then
-            # Move binary outside .framework path so codesign treats it as a raw Mach-O binary
             mv "$PYTHON_BIN" /tmp/Python_tmp
             codesign --force --options runtime --timestamp \
               --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
               --keychain build.keychain /tmp/Python_tmp
             mv /tmp/Python_tmp "$PYTHON_BIN"
             echo "Successfully signed Python framework binary."
+          else
+            echo "Warning: Python binary not found at $PYTHON_BIN"
           fi
 
           # 3. Sign All Other Internal Mach-O Binaries (.dylib, .so)
@@ -463,7 +464,7 @@ jobs:
 
           SIGNED_COUNT=0
           while read -r file; do
-            # Skip launcher and already-signed Python binary
+            # Skip launcher and the Python binary (already signed above)
             if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ] && [ "$file" != "$PYTHON_BIN" ]; then
               if file -b "$file" | grep -q "Mach-O"; then
                 codesign --force --options runtime --timestamp \
@@ -484,7 +485,7 @@ jobs:
             "$FINAL_APP/Contents/MacOS/Deluge"
 
           # 5. Sign Outer Application Bundle Envelope
-          echo "=== 5. Signing Outer Application Bundle ==="
+          echo "=== 5. Sign Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
