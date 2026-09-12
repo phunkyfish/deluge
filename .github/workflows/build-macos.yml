@@ -438,33 +438,30 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 1. Sign Nested Framework Bundles First (Top-Level Framework Directories)
-          echo "=== 1. Signing Framework Bundles ==="
-          find "$FINAL_APP/Contents" -type d -name "*.framework" | while read -r framework; do
-            echo "Signing framework: ${framework#$FINAL_APP/}"
-            codesign --force --options runtime --timestamp \
-              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-              --keychain build.keychain "$framework"
-          done
+          # 1. Strip misleading bundle metadata from PyInstaller's embedded Python.framework
+          echo "=== 1. Cleaning Ambiguous Framework Metadata ==="
+          find "$FINAL_APP/Contents/Resources/Python.framework" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
 
-          # 2. Sign Standalone Dylibs & Python C-Extensions (.so)
-          echo "=== 2. Signing Dylibs and C-Extensions ==="
-          # Process files into a temporary list to avoid find pipe errors (stdout: Undefined error: 0)
+          # 2. Sign All Mach-O Binaries (.dylib, .so, embedded Mach-O binaries)
+          echo "=== 2. Signing All Dynamic Libraries and Mach-O Executables ==="
           FILES_TO_SIGN=$(mktemp)
-          find "$FINAL_APP/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) ! -type l > "$FILES_TO_SIGN"
+          find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
           SIGNED_COUNT=0
           while read -r file; do
-            if [ -n "$file" ] && file -b "$file" | grep -q "Mach-O"; then
-              codesign --force --options runtime --timestamp \
-                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-                --keychain build.keychain "$file"
-              SIGNED_COUNT=$((SIGNED_COUNT + 1))
+            # Exclude main launcher (signed last with entitlements)
+            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
+              if file -b "$file" | grep -q "Mach-O"; then
+                codesign --force --options runtime --timestamp \
+                  --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+                  --keychain build.keychain "$file"
+                SIGNED_COUNT=$((SIGNED_COUNT + 1))
+              fi
             fi
           done < "$FILES_TO_SIGN"
           rm -f "$FILES_TO_SIGN"
 
-          echo "Signed $SIGNED_COUNT dynamic libraries and extensions."
+          echo "Signed $SIGNED_COUNT internal Mach-O binaries."
 
           # 3. Sign Main Executable with Entitlements
           echo "=== 3. Signing Main Executable ==="
