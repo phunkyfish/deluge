@@ -269,6 +269,24 @@ jobs:
           pattern: deluge-thin-*
           path: /tmp/thin_builds
 
+      - name: Verify Artifact Symlinks and Sizes
+        run: |
+          echo "=== Symlink Inventory in Downloaded ARM64 Build ==="
+          # 1. Count explicit symlinks versus regular files in Frameworks
+          SYMLINK_COUNT=$(find /tmp/thin_builds/deluge-thin-arm64/Contents -type l | wc -l)
+          REGULAR_FILE_COUNT=$(find /tmp/thin_builds/deluge-thin-arm64/Contents -type f | wc -l)
+
+          echo "Total Symlinks: $SYMLINK_COUNT"
+          echo "Total Regular Files: $REGULAR_FILE_COUNT"
+
+          echo "=== Checking Specific Dynamic Library Aliases ==="
+          # 2. Inspect a known framework alias (e.g. Python or glib aliases)
+          ls -la /tmp/thin_builds/deluge-thin-arm64/Contents/Frameworks/ || true
+
+          # 3. Check disk usage breakdown
+          echo "=== Top 10 Largest Files in Downloaded Artifact ==="
+          find /tmp/thin_builds/deluge-thin-arm64/Contents -type f -exec du -h {} + | sort -rh | head -n 10
+
       - name: Inspect Downloaded App Bundles
         run: |
           echo "=== Checking Downloaded App Paths ==="
@@ -276,7 +294,7 @@ jobs:
           ls -la /tmp/thin_builds/deluge-thin-x86_64
 
           echo "=== Verifying Symlinks Preserved in ARM64 Artifact ==="
-          find /tmp/thin_builds/deluge-thin-arm64/Deluge.app -type l | head -n 5 || echo "No symlinks found"
+          find /tmp/thin_builds/deluge-thin-arm64/Contents -type l | head -n 5 || echo "No symlinks found"
 
       - name: Install Packaging Tools
         run: brew install create-dmg
