@@ -221,7 +221,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: dist/  # Uploads dist/ containing Deluge.app
+          path: dist/Deluge.app
           include-hidden-files: true
 
   # ====================================================================
@@ -287,20 +287,21 @@ jobs:
           rm -rf "$FINAL_APP" "$GITHUB_WORKSPACE/dist/tmp_launcher"
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          # 2. Point directly to downloaded app bundles
-          ARM_APP="/tmp/thin_builds/deluge-thin-arm64/Deluge.app"
-          X86_APP="/tmp/thin_builds/deluge-thin-x86_64/Deluge.app"
+          # 2. Point directly to downloaded app bundle root paths
+          ARM_APP="/tmp/thin_builds/deluge-thin-arm64"
+          X86_APP="/tmp/thin_builds/deluge-thin-x86_64"
 
-          if [ ! -d "$ARM_APP" ] || [ ! -d "$X86_APP" ]; then
-            echo "Error: Failed to locate Deluge.app in downloaded artifacts!"
+          if [ ! -d "$ARM_APP/Contents" ] || [ ! -d "$X86_APP/Contents" ]; then
+            echo "Error: Failed to locate Contents directory in downloaded artifacts!"
             exit 1
           fi
 
-          echo "Found ARM app at: $ARM_APP"
-          echo "Found x86 app at: $X86_APP"
+          echo "Found ARM app contents at: $ARM_APP"
+          echo "Found x86 app contents at: $X86_APP"
 
-          # 3. Establish base structure from ARM64 build
-          cp -a "$ARM_APP" "$FINAL_APP"
+          # 3. Establish base structure from ARM64 build into $FINAL_APP (/dist/Deluge.app)
+          mkdir -p "$FINAL_APP"
+          cp -a "$ARM_APP/." "$FINAL_APP/"
 
           # 4. Generate native Universal2 main executable via PyInstaller
           echo "=== Building Native Universal2 Launcher Executable ==="
@@ -438,21 +439,24 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 1. Strip misleading bundle metadata from PyInstaller's embedded Python.framework
+          # 1. Clean up misleading framework metadata
           echo "=== 1. Cleaning Ambiguous Framework Metadata ==="
           find "$FINAL_APP/Contents/Resources/Python.framework" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
 
-          # 2. Sign All Mach-O Binaries (.dylib, .so, embedded Mach-O binaries)
-          echo "=== 2. Signing All Dynamic Libraries and Mach-O Executables ==="
+          # 2. Sign All Internal Mach-O Binaries (.dylib, .so, Python binary)
+          echo "=== 2. Signing Dynamic Libraries, C-Extensions, and Framework Binaries ==="
           FILES_TO_SIGN=$(mktemp)
           find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
           SIGNED_COUNT=0
           while read -r file; do
-            # Exclude main launcher (signed last with entitlements)
+            # Skip the main launcher executable (signed in step 3 with entitlements)
             if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
               if file -b "$file" | grep -q "Mach-O"; then
+                echo "Signing Mach-O binary: ${file#$FINAL_APP/}"
+                # Using --preserve-metadata=identifier prevents codesign from expecting a full .framework layout
                 codesign --force --options runtime --timestamp \
+                  --preserve-metadata=identifier,flags,entitlements \
                   --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                   --keychain build.keychain "$file"
                 SIGNED_COUNT=$((SIGNED_COUNT + 1))
@@ -461,7 +465,7 @@ jobs:
           done < "$FILES_TO_SIGN"
           rm -f "$FILES_TO_SIGN"
 
-          echo "Signed $SIGNED_COUNT internal Mach-O binaries."
+          echo "Successfully signed $SIGNED_COUNT internal Mach-O binaries."
 
           # 3. Sign Main Executable with Entitlements
           echo "=== 3. Signing Main Executable ==="
