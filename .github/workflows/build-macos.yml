@@ -221,7 +221,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deluge-thin-${{ matrix.arch }}
-          path: dist/Deluge.app
+          path: dist/  # Uploads dist/ containing Deluge.app
           include-hidden-files: true
 
   # ====================================================================
