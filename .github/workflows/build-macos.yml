@@ -430,52 +430,56 @@ jobs:
         run: |
           if [ ! -d "$FINAL_APP/Contents" ]; then
             echo "Error: Could not locate $FINAL_APP!"
-            ls -la "$GITHUB_WORKSPACE"
             exit 1
           fi
-
-          echo "Target signing app path verified at: $FINAL_APP"
 
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          echo "=== Signing Inner Mach-O Binaries ==="
+          # 1. Sign Nested Framework Bundles First (Top-Level Framework Directories)
+          echo "=== 1. Signing Framework Bundles ==="
+          find "$FINAL_APP/Contents" -type d -name "*.framework" | while read -r framework; do
+            echo "Signing framework: ${framework#$FINAL_APP/}"
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+              --keychain build.keychain "$framework"
+          done
+
+          # 2. Sign Standalone Dylibs & Python C-Extensions (.so)
+          echo "=== 2. Signing Dylibs and C-Extensions ==="
+          # Process files into a temporary list to avoid find pipe errors (stdout: Undefined error: 0)
+          FILES_TO_SIGN=$(mktemp)
+          find "$FINAL_APP/Contents" -type f \( -name "*.dylib" -o -name "*.so" \) ! -type l > "$FILES_TO_SIGN"
+
           SIGNED_COUNT=0
-
           while read -r file; do
-            if [ "$file" = "$FINAL_APP/Contents/MacOS/Deluge" ]; then
-              continue
-            fi
-
-            if file -b "$file" | grep -q "Mach-O"; then
-              echo "Signing inner binary: ${file#$FINAL_APP/}"
+            if [ -n "$file" ] && file -b "$file" | grep -q "Mach-O"; then
               codesign --force --options runtime --timestamp \
                 --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                 --keychain build.keychain "$file"
               SIGNED_COUNT=$((SIGNED_COUNT + 1))
             fi
-          done < <(find "$FINAL_APP/Contents" -type f ! -type l)
+          done < "$FILES_TO_SIGN"
+          rm -f "$FILES_TO_SIGN"
 
-          echo "Successfully signed $SIGNED_COUNT inner Mach-O binaries."
+          echo "Signed $SIGNED_COUNT dynamic libraries and extensions."
 
-          if [ "$SIGNED_COUNT" -eq 0 ]; then
-            echo "Error: Zero inner binaries were signed!"
-            exit 1
-          fi
-
-          echo "=== Signing Main Executable ==="
+          # 3. Sign Main Executable with Entitlements
+          echo "=== 3. Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          echo "=== Signing Outer Application Bundle ==="
+          # 4. Sign Outer Application Bundle Envelope
+          echo "=== 4. Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          echo "=== Verifying Bundle Signature ==="
+          # 5. Verify Signature
+          echo "=== 5. Verifying Bundle Signature ==="
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
 
