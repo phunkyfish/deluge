@@ -282,22 +282,60 @@ jobs:
           tar -xf /tmp/thin_builds/deluge-thin-arm64/deluge-thin-arm64.tar -C /tmp/thin_builds/arm64_extracted
           tar -xf /tmp/thin_builds/deluge-thin-x86_64/deluge-thin-x86_64.tar -C /tmp/thin_builds/x86_extracted
 
-      - name: Verify Artifact Symlinks and Sizes
+      - name: Verify Artifact Integrity & Counts
         run: |
           ARM_APP="/tmp/thin_builds/arm64_extracted/Deluge.app"
 
-          echo "=== Symlink Inventory in Extracted ARM64 Build ==="
-          SYMLINK_COUNT=$(find "$ARM_APP/Contents" -type l | wc -l)
-          REGULAR_FILE_COUNT=$(find "$ARM_APP/Contents" -type f | wc -l)
+          if [ ! -d "$ARM_APP" ]; then
+            echo "Error: $ARM_APP not found for verification!"
+            exit 1
+          fi
 
-          echo "Total Symlinks: $SYMLINK_COUNT"
-          echo "Total Regular Files: $REGULAR_FILE_COUNT"
+          echo "=================================================="
+          echo "       THIN APP ARTIFACT HEALTH INVENTORY         "
+          echo "=================================================="
 
-          echo "=== Sample Symlink Aliases in Frameworks ==="
-          find "$ARM_APP/Contents" -type l | head -n 5 || echo "No symlinks found"
+          # Overall Footprint
+          BUNDLE_SIZE=$(du -sh "$ARM_APP" | cut -f1)
+          TOTAL_SYMLINKS=$(find "$ARM_APP" -type l | wc -l | tr -d ' ')
+          TOTAL_FILES=$(find "$ARM_APP" -type f | wc -l | tr -d ' ')
 
-          echo "=== App Bundle Disk Usage ==="
-          du -sh "$ARM_APP"
+          echo "Total Bundle Size : $BUNDLE_SIZE"
+          echo "Total Physical Files: $TOTAL_FILES"
+          echo "Total Symlinks      : $TOTAL_SYMLINKS"
+          echo "--------------------------------------------------"
+
+          # Category Breakdown Function
+          count_breakdown() {
+            local ext="$1"
+            local label="$2"
+
+            # Count physical files (-type f) excluding symlinks
+            local real_files=$(find "$ARM_APP" -type f -name "*$ext" ! -type l | wc -l | tr -d ' ')
+            # Count symlinks (-type l) matching extension
+            local symlinks=$(find "$ARM_APP" -type l -name "*$ext" | wc -l | tr -d ' ')
+
+            printf "%-12s | Real Files: %-5s | Symlinks: %-5s\n" "$label" "$real_files" "$symlinks"
+          }
+
+          echo "FILE TYPE BREAKDOWN:"
+          count_breakdown ".dylib" ".dylib"
+          count_breakdown ".so"    ".so"
+          count_breakdown ".pyc"   ".pyc"
+
+          echo "--------------------------------------------------"
+          echo "SAMPLE SYMLINK TARGETS (.dylib):"
+          find "$ARM_APP" -type l -name "*.dylib" | head -n 5 | while read -r link; do
+            target=$(readlink "$link")
+            echo "  ${link#$ARM_APP/} -> $target"
+          done
+          echo "=================================================="
+
+          # Fail fast if symlinks dereferenced to zero again
+          if [ "$TOTAL_SYMLINKS" -eq 0 ]; then
+            echo "CRITICAL ERROR: Symlinks count is 0! Artifact dereferencing has recurred."
+            exit 1
+          fi
 
       - name: Install Packaging Tools
         run: brew install create-dmg
