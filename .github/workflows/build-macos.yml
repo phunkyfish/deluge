@@ -355,20 +355,41 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Lipo-stitch pure Mach-O launcher executable (no embedded CArchive)
-          echo "=== Generating Universal2 Launcher Executable ==="
+          # 4. Stitch Pure PyInstaller Bootstrapper Templates into Universal2
+          echo "=== Stitching Pure PyInstaller Bootstrapper Templates ==="
 
-          ARM_LAUNCHER="$ARM_APP/Contents/MacOS/Deluge"
-          X86_LAUNCHER="$X86_APP/Contents/MacOS/Deluge"
+          # i. Locate the raw, un-appended bootstrapper binaries in host PyInstaller package
+          PYI_DIR=$(python3 -c "import PyInstaller; import os; print(os.path.dirname(PyInstaller.__file__))")
+          ARM_BOOT="$PYI_DIR/bootloader/Darwin-64bit/runw"
+          X86_BOOT="$PYI_DIR/bootloader/Darwin-64bit-intel/runw"
 
-          if [ ! -f "$ARM_LAUNCHER" ] || [ ! -f "$X86_LAUNCHER" ]; then
-            echo "Error: Missing thin launcher binaries!"
-            exit 1
+          # Fallback path search if directory naming varies by version
+          if [ ! -f "$ARM_BOOT" ]; then
+            ARM_BOOT=$(find "$PYI_DIR/bootloader" -name "runw" | grep -i "arm\|64bit" | head -n 1)
+            X86_BOOT=$(find "$PYI_DIR/bootloader" -name "runw" | grep -i "intel" | head -n 1)
           fi
 
-          echo "Merging ARM launcher and x86 launcher..."
-          lipo -create "$ARM_LAUNCHER" "$X86_LAUNCHER" -output "$FINAL_APP/Contents/MacOS/Deluge"
+          echo "ARM Bootstrapper: $ARM_BOOT"
+          echo "x86 Bootstrapper: $X86_BOOT"
+
+          # ii. Lipo-merge pristine bootstrapper templates into the Universal2 launcher
+          lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
+
+          # iii. Preserve PyInstaller archive payload and Table of Contents
+          echo "=== Copying Externalized CArchive Payload ==="
+
+          # Copy the standalone archive/PKG files generated from the ARM build
+          if [ -d "$ARM_APP/Contents/MacOS/_internal" ]; then
+            mkdir -p "$FINAL_APP/Contents/MacOS/_internal"
+            cp -af "$ARM_APP/Contents/MacOS/_internal/." "$FINAL_APP/Contents/MacOS/_internal/"
+          fi
+
+          # Ensure any loose .pkg archive files in Contents/Resources are copied over
+          find "$ARM_APP/Contents/Resources" -maxdepth 2 -name "*.pkg" -o -name "pydata*" | while read -r pkg_file; do
+            echo "Copying PKG archive payload: $(basename "$pkg_file")"
+            cp -f "$pkg_file" "$FINAL_APP/Contents/Resources/"
+          done
 
           echo "=== Verifying Universal2 Launcher Slices ==="
           lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
