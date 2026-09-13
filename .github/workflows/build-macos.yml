@@ -412,7 +412,10 @@ jobs:
           echo "=== Compiling Native Universal2 Bootstrapper ==="
 
           SYS_PYTHON_INCLUDES=$(python3-config --includes)
-          HOST_FRAMEWORK_DIR="/Library/Frameworks/Python.framework/Versions/3.11"
+
+          # Point Framework paths to both the runner host (for compilation) and staged bundle
+          HOST_FRAMEWORKS="/Library/Frameworks"
+          BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
 
           cat <<'EOF' > launcher.c
           #include <Python.h>
@@ -465,15 +468,15 @@ jobs:
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
-              PyMem_RawFree(w_py_home);
               return result;
           }
           EOF
 
-          # Compile natively for both arm64 and x86_64 targets using host headers + bundled Framework
+          # Compile natively: use host framework search path for building, and bundle rpath for runtime
           clang -arch arm64 -arch x86_64 \
             $SYS_PYTHON_INCLUDES \
-            -F"$PY_FRAMEWORK_DIR" \
+            -F"$HOST_FRAMEWORKS" \
+            -F"$BUNDLE_FRAMEWORKS" \
             -framework Python \
             -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
