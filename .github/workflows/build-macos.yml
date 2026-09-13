@@ -417,11 +417,14 @@ jobs:
 
           SYS_PYTHON_INCLUDES=$(python3-config --includes)
 
-          # Point Framework paths to both the runner host (for compilation) and staged bundle
+          # Dynamically detect active Python version string (e.g. "3.14" or "3.11")
+          PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          echo "Detected Runner Python Version: $PY_VER"
+
           HOST_FRAMEWORKS="/Library/Frameworks"
           BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
 
-          cat <<'EOF' > launcher.c
+          cat <<EOF > launcher.c
           #include <Python.h>
           #include <libgen.h>
           #include <limits.h>
@@ -440,7 +443,7 @@ jobs:
 
               // Set Python Home to bundled Python.framework inside app bundle
               char py_home[PATH_MAX];
-              snprintf(py_home, sizeof(py_home), "%s/../Frameworks/Python.framework/Versions/3.11", exec_dir);
+              snprintf(py_home, sizeof(py_home), "%s/../Frameworks/Python.framework/Versions/$PY_VER", exec_dir);
 
               // Modern Python 3.11+ Config API (no deprecation warnings)
               PyConfig config;
@@ -476,7 +479,7 @@ jobs:
           }
           EOF
 
-          # Compile natively using host framework headers/slices
+          # Compile launcher
           clang -arch arm64 -arch x86_64 \
             $SYS_PYTHON_INCLUDES \
             -F"$HOST_FRAMEWORKS" \
@@ -485,24 +488,28 @@ jobs:
             -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # Force binary to load the bundled Python framework via relative @rpath
+          # Dynamically fix Mach-O dynamic link path using otool discovery
           echo "=== Fixing Executable Dynamic Linker Paths ==="
 
-          # 1. Identify the hardcoded Python path embedded during linking
+          # 1. Grab whatever hardcoded Python framework path clang embedded
           HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/Deluge" | grep "Python.framework" | awk '{print $1}')
-          echo "Detected hardcoded link path: $HARDCODED_PATH"
+          echo "Hardcoded link path to replace: $HARDCODED_PATH"
 
-          # 2. Change the hardcoded absolute path to an @rpath relative path
+          # 2. Extract actual framework target inside the staged bundle
+          BUNDLED_PY_LIB=$(find "$FINAL_APP/Contents/Frameworks/Python.framework" -name "Python" -type f | head -n 1)
+          BUNDLED_REL_PATH="${BUNDLED_PY_LIB#$FINAL_APP/Contents/Frameworks/}"
+
+          # 3. Swap hardcoded path out for relative @rpath load command
           if [ -n "$HARDCODED_PATH" ]; then
             install_name_tool -change "$HARDCODED_PATH" \
-              "@rpath/Python.framework/Versions/3.11/Python" \
+              "@rpath/$BUNDLED_REL_PATH" \
               "$FINAL_APP/Contents/MacOS/Deluge"
           fi
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           rm -f launcher.c
 
-          echo "=== Verifying Updated Mach-O Dependencies ==="
+          echo "=== Verifying Updated Dependencies ==="
           otool -L "$FINAL_APP/Contents/MacOS/Deluge"
 
       - name: Clean Broken Symlinks in Bundle
