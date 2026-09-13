@@ -389,6 +389,10 @@ jobs:
             exit 1
           fi
 
+          # Ensure internal framework ID is relative
+          install_name_tool -id "@rpath/Python.framework/Versions/3.11/Python" \
+            "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/Python"
+
           # 5. Recursively merge all remaining Mach-O binaries in Frameworks and Resources
           echo "=== Merging Dynamic Libraries (.dylib) and C-Extensions (.so) ==="
           find "$ARM_APP/Contents" -type f ! -type l 2>/dev/null | while read -r arm_file; do
@@ -472,7 +476,7 @@ jobs:
           }
           EOF
 
-          # Compile natively: use host framework search path for building, and bundle rpath for runtime
+          # Compile natively using host framework headers/slices
           clang -arch arm64 -arch x86_64 \
             $SYS_PYTHON_INCLUDES \
             -F"$HOST_FRAMEWORKS" \
@@ -481,11 +485,25 @@ jobs:
             -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
+          # Force binary to load the bundled Python framework via relative @rpath
+          echo "=== Fixing Executable Dynamic Linker Paths ==="
+
+          # 1. Identify the hardcoded Python path embedded during linking
+          HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/Deluge" | grep "Python.framework" | awk '{print $1}')
+          echo "Detected hardcoded link path: $HARDCODED_PATH"
+
+          # 2. Change the hardcoded absolute path to an @rpath relative path
+          if [ -n "$HARDCODED_PATH" ]; then
+            install_name_tool -change "$HARDCODED_PATH" \
+              "@rpath/Python.framework/Versions/3.11/Python" \
+              "$FINAL_APP/Contents/MacOS/Deluge"
+          fi
+
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           rm -f launcher.c
 
-          echo "=== Verifying Compiled Universal2 Executable ==="
-          lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
+          echo "=== Verifying Updated Mach-O Dependencies ==="
+          otool -L "$FINAL_APP/Contents/MacOS/Deluge"
 
       - name: Clean Broken Symlinks in Bundle
         run: |
