@@ -504,25 +504,25 @@ jobs:
           if [ -d "$FRAMEWORK_DIR" ] && [ ! -f "$FRAMEWORK_DIR/Resources/Info.plist" ] && [ ! -f "$FRAMEWORK_DIR/Info.plist" ]; then
             mkdir -p "$FRAMEWORK_DIR/Resources"
             cat <<'EOF' > "$FRAMEWORK_DIR/Resources/Info.plist"
-<?xml version= "1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>English</string>
-    <key>CFBundleExecutable</key>
-    <string>Python</string>
-    <key>CFBundleIdentifier</key>
-    <string>org.python.python</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>Python</string>
-    <key>CFBundlePackageType</key>
-    <string>FMWK</string>
-</dict>
-</plist>
-EOF
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0">' \
+              '<dict>' \
+              '    <key>CFBundleDevelopmentRegion</key>' \
+              '    <string>English</string>' \
+              '    <key>CFBundleExecutable</key>' \
+              '    <string>Python</string>' \
+              '    <key>CFBundleIdentifier</key>' \
+              '    <string>org.python.python</string>' \
+              '    <key>CFBundleInfoDictionaryVersion</key>' \
+              '    <string>6.0</string>' \
+              '    <key>CFBundleName</key>' \
+              '    <string>Python</string>' \
+              '    <key>CFBundlePackageType</key>' \
+              '    <string>FMWK</string>' \
+              '</dict>' \
+              '</plist>' > "$FRAMEWORK_DIR/Resources/Info.plist"
           fi
 
           # 2. Sign All Standalone Mach-O Binaries (.dylib, .so)
