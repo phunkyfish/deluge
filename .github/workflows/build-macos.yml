@@ -377,9 +377,20 @@ jobs:
           # 4. Compile Native Universal2 Launcher Executable
           echo "=== Compiling Native Universal2 Bootstrapper ==="
 
-          # Create lightweight launcher source
+          # Resolve absolute path to Python framework inside the staged app bundle
+          PY_FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks"
+          PY_INCLUDE_DIR="$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/include/python3.11"
+
+          # Fallback check if headers sit inside Python.framework or _internal
+          if [ ! -d "$PY_INCLUDE_DIR" ]; then
+            PY_INCLUDE_DIR=$(find "$FINAL_APP/Contents" -type d -name "python3.11" | grep "include" | head -n 1)
+          fi
+
+          echo "Using Python Headers from: $PY_INCLUDE_DIR"
+
+          # Create lightweight C launcher source
           cat <<'EOF' > launcher.c
-          #include "Python.framework/Versions/3.11/include/python3.11/Python.h"
+          #include <Python.h>
           #include <libgen.h>
           #include <limits.h>
           #include <mach-o/dyld.h>
@@ -424,12 +435,12 @@ jobs:
           }
           EOF
 
-          # Compile natively for both x86_64 and arm64 targets simultaneously
+          # Compile natively for both arm64 and x86_64 targets
           clang -arch arm64 -arch x86_64 \
-            -I"$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/include/python3.11" \
-            -L"$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11" \
-            -lpython3.11 \
-            -rpath "@executable_path/../Frameworks/Python.framework/Versions/3.11" \
+            -I"$PY_INCLUDE_DIR" \
+            -F"$PY_FRAMEWORK_DIR" \
+            -framework Python \
+            -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
