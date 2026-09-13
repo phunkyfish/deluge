@@ -382,11 +382,32 @@ jobs:
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           rm -rf "$GITHUB_WORKSPACE/dist/tmp_launcher" run_deluge.py
 
-          # 5. Lipo-stitch Mach-O C-extensions and Frameworks
+          # 5. Lipo-stitch Mach-O C-extensions and Frameworks cleanly
           echo "=== Merging C-extensions and Frameworks via lipo ==="
+
+          # Explicitly stitch Python binary directly to avoid broken symlink targets
+          ARM_PY=$(find "$ARM_APP" -path "*/Python.framework/*" -type f -name "Python" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
+          X86_PY=$(find "$X86_APP" -path "*/Python.framework/*" -type f -name "Python" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
+
+          if [ -n "$ARM_PY" ] && [ -n "$X86_PY" ]; then
+            echo "Building Universal2 Python binary target..."
+            mkdir -p "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11"
+            lipo -create "$ARM_PY" "$X86_PY" -output "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/Python"
+
+            # Re-link top-level framework entry
+            ln -sf "Versions/3.11/Python" "$FINAL_APP/Contents/Frameworks/Python.framework/Python"
+          fi
+
+          # Process all remaining dynamic libraries and .so binaries
           if [ -d "$ARM_APP/Contents/Frameworks" ]; then
             find "$ARM_APP/Contents/Frameworks" -type f ! -type l 2>/dev/null | while read -r arm_file; do
               rel_path="${arm_file#$ARM_APP/Contents/Frameworks/}"
+
+              # Skip Python binary since it was explicitly stitched above
+              if [[ "$rel_path" == *"Python.framework/Python"* ]] || [[ "$rel_path" == *"Python.framework/Versions/"* ]]; then
+                continue
+              fi
+
               x86_file="$X86_APP/Contents/Frameworks/$rel_path"
               target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
 
