@@ -503,7 +503,7 @@ jobs:
           echo "=== 1. Validating Framework Metadata ==="
           if [ -d "$FRAMEWORK_DIR" ] && [ ! -f "$FRAMEWORK_DIR/Resources/Info.plist" ] && [ ! -f "$FRAMEWORK_DIR/Info.plist" ]; then
             mkdir -p "$FRAMEWORK_DIR/Resources"
-            cat << 'EOF' > "$FRAMEWORK_DIR/Resources/Info.plist"
+            cat <<'EOF' > "$FRAMEWORK_DIR/Resources/Info.plist"
             <?xml version= "1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0">
