@@ -402,16 +402,26 @@ jobs:
               // Resolve directory containing the executable
               char *exec_dir = dirname(path);
 
-              # Set Python Home to bundled Python.framework inside app bundle
+              // Set Python Home to bundled Python.framework inside app bundle
               char py_home[PATH_MAX];
               snprintf(py_home, sizeof(py_home), "%s/../Frameworks/Python.framework/Versions/3.11", exec_dir);
 
+              // Modern Python 3.11+ Config API (no deprecation warnings)
+              PyConfig config;
+              PyConfig_InitPythonConfig(&config);
+
               wchar_t *w_py_home = Py_DecodeLocale(py_home, NULL);
-              Py_SetPythonHome(w_py_home);
+              PyConfig_SetString(&config, &config.home, w_py_home);
 
-              Py_Initialize();
+              PyStatus status = Py_InitializeFromConfig(&config);
+              PyConfig_Clear(&config);
+              PyMem_RawFree(w_py_home);
 
-              # Inject app entrypoint script into Python runtime
+              if (PyStatus_Exception(status)) {
+                  return 1;
+              }
+
+              // Inject app entrypoint script into Python runtime
               const char *script =
                   "import sys, os, builtins, gettext\n"
                   "bundle = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '..'))\n"
