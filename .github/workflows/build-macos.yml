@@ -349,54 +349,27 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Generate Universal2 Launcher Executable with Real Boot Sequence
-          echo "=== Building Native Universal2 Launcher Executable ==="
+          # 4. Stitch PyInstaller's Clean Bootstrapper Templates into Universal2
+          echo "=== Generating Universal2 PyInstaller Launcher Bootstrapper ==="
 
-          cat <<'EOF' > run_deluge.py
-          import sys
-          import os
-          import builtins
-          import gettext
+          # Locate PyInstaller's internal bootstrapper binaries in host environment
+          PYI_BOOT_DIR=$(python3 -c "import PyInstaller.bootloader as b; import os; print(os.path.dirname(b.__file__))")
 
-          # Ensure bundle Resources and Frameworks are on the Python path
-          bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-          resources_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Resources'))
-          if resources_dir not in sys.path:
-              sys.path.insert(0, resources_dir)
+          ARM_BOOT="$PYI_BOOT_DIR/Darwin-64bit/runw"
+          X86_BOOT="$PYI_BOOT_DIR/Darwin-64bit-intel/runw"
 
-          # Set up translation builtins required by Deluge UI
-          try:
-              trans = gettext.translation('deluge', fallback=True)
-              builtins._ = trans.gettext
-          except Exception:
-              builtins._ = lambda msg: msg
+          # Fallback check if path naming differs in version
+          if [ ! -f "$X86_BOOT" ]; then
+            X86_BOOT=$(find "$PYI_BOOT_DIR" -name "runw" | grep -i "intel" | head -n 1)
+            ARM_BOOT=$(find "$PYI_BOOT_DIR" -name "runw" | grep -i "arm" | head -n 1)
+          fi
 
-          if '_' not in builtins.__dict__:
-              builtins.__dict__['_'] = lambda msg: msg
+          echo "Using ARM Bootstrapper: $ARM_BOOT"
+          echo "Using x86 Bootstrapper: $X86_BOOT"
 
-          # Launch main GTK interface
-          from deluge.ui.gtk3.gtkui import GtkUI
-
-          def start():
-              ui = GtkUI()
-              ui.start()
-
-          if __name__ == '__main__':
-              start()
-          EOF
-
-          python3 -m PyInstaller --onedir --windowed --name="Deluge" \
-            --target-architecture universal2 \
-            --noconfirm \
-            --distpath "$GITHUB_WORKSPACE/dist/tmp_launcher" \
-            run_deluge.py
-
-          echo "=== Overwriting Base Launcher with Universal2 Executable ==="
-          cp "$GITHUB_WORKSPACE/dist/tmp_launcher/Deluge.app/Contents/MacOS/Deluge" \
-             "$FINAL_APP/Contents/MacOS/Deluge"
-
+          # Lipo merge the clean bootstrappers directly into the launcher executable
+          lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
-          rm -rf "$GITHUB_WORKSPACE/dist/tmp_launcher" run_deluge.py
 
           # 5. Lipo-stitch Mach-O C-extensions and Frameworks cleanly
           echo "=== Merging C-extensions and Frameworks via lipo ==="
