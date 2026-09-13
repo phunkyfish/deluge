@@ -374,25 +374,27 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Stitch Pure PyInstaller Bootstrapper Templates into Universal2
-          echo "=== Stitching Pure PyInstaller Bootstrapper Templates ==="
+          # 4. Use Pure Universal2 Launcher Executable
+          echo "=== Setting Up Universal2 Launcher Executable ==="
 
-          # Locate exported bootloaders extracted from tar archives
           ARM_BOOT=$(find /tmp/thin_builds -name "runw_arm64" | head -n 1)
-          X86_BOOT=$(find /tmp/thin_builds -name "runw_x86_64" | head -n 1)
 
-          if [ ! -f "$ARM_BOOT" ] || [ ! -f "$X86_BOOT" ]; then
-            echo "Error: Missing exported bootloaders from matrix artifacts!"
-            echo "ARM Bootstrapper found: $ARM_BOOT"
-            echo "x86 Bootstrapper found: $X86_BOOT"
+          if [ ! -f "$ARM_BOOT" ]; then
+            echo "Error: Missing exported Universal2 runw bootloader!"
             exit 1
           fi
 
-          echo "Found ARM Bootstrapper: $ARM_BOOT"
-          echo "Found x86 Bootstrapper: $X86_BOOT"
+          # If runw is already fat universal2, use it directly!
+          if file -b "$ARM_BOOT" | grep -q "universal binary"; then
+            echo "Bootloader is already Universal2 fat binary, copying directly..."
+            cp "$ARM_BOOT" "$FINAL_APP/Contents/MacOS/Deluge"
+          else
+            # Fallback if thin slices were provided
+            X86_BOOT=$(find /tmp/thin_builds -name "runw_x86_64" | head -n 1)
+            echo "Merging thin slices into Universal2 binary..."
+            lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
+          fi
 
-          # Lipo-merge pristine bootstrapper templates into the Universal2 launcher
-          lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
           # Preserve PyInstaller archive payload and Table of Contents
