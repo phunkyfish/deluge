@@ -211,10 +211,25 @@ jobs:
           # 5. Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
+      - name: Export PyInstaller Raw Bootloader Template
+        run: |
+          echo "=== Exporting Raw PyInstaller Bootloader Template ==="
+          PYI_DIR=$(python3 -c "import PyInstaller; import os; print(os.path.dirname(PyInstaller.__file__))")
+
+          # Find the runw template used by this matrix runner
+          RUNW_BIN=$(find "$PYI_DIR/bootloader" -name "runw" | head -n 1)
+
+          # Detect matrix runner arch to name the output file uniquely
+          ARCH_NAME=$(uname -m)
+          echo "Current runner arch: ${{ matrix.arch }}"
+          echo "Source bootloader: $RUNW_BIN"
+
+          cp "$RUNW_BIN" "$GITHUB_WORKSPACE/dist/runw_${{ matrix.arch }}"
+
       - name: Archive Thin App Bundle (Preserves Symlinks)
         run: |
           cd dist
-          tar -cf "../deluge-thin-${{ matrix.arch }}.tar" Deluge.app
+          tar -cf "../deluge-thin-${{ matrix.arch }}.tar" Deluge.app "runw_${{ matrix.arch }}"
 
       - name: Upload Thin App Build
         uses: actions/upload-artifact@v4
@@ -358,34 +373,31 @@ jobs:
           # 4. Stitch Pure PyInstaller Bootstrapper Templates into Universal2
           echo "=== Stitching Pure PyInstaller Bootstrapper Templates ==="
 
-          # i. Locate the raw, un-appended bootstrapper binaries in host PyInstaller package
-          PYI_DIR=$(python3 -c "import PyInstaller; import os; print(os.path.dirname(PyInstaller.__file__))")
-          ARM_BOOT="$PYI_DIR/bootloader/Darwin-64bit/runw"
-          X86_BOOT="$PYI_DIR/bootloader/Darwin-64bit-intel/runw"
+          # Locate exported bootloaders extracted from tar archives
+          ARM_BOOT=$(find /tmp/thin_builds -name "runw_arm64" | head -n 1)
+          X86_BOOT=$(find /tmp/thin_builds -name "runw_x86_64" | head -n 1)
 
-          # Fallback path search if directory naming varies by version
-          if [ ! -f "$ARM_BOOT" ]; then
-            ARM_BOOT=$(find "$PYI_DIR/bootloader" -name "runw" | grep -i "arm\|64bit" | head -n 1)
-            X86_BOOT=$(find "$PYI_DIR/bootloader" -name "runw" | grep -i "intel" | head -n 1)
+          if [ ! -f "$ARM_BOOT" ] || [ ! -f "$X86_BOOT" ]; then
+            echo "Error: Missing exported bootloaders from matrix artifacts!"
+            echo "ARM Bootstrapper found: $ARM_BOOT"
+            echo "x86 Bootstrapper found: $X86_BOOT"
+            exit 1
           fi
 
-          echo "ARM Bootstrapper: $ARM_BOOT"
-          echo "x86 Bootstrapper: $X86_BOOT"
+          echo "Found ARM Bootstrapper: $ARM_BOOT"
+          echo "Found x86 Bootstrapper: $X86_BOOT"
 
-          # ii. Lipo-merge pristine bootstrapper templates into the Universal2 launcher
+          # Lipo-merge pristine bootstrapper templates into the Universal2 launcher
           lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # iii. Preserve PyInstaller archive payload and Table of Contents
+          # Preserve PyInstaller archive payload and Table of Contents
           echo "=== Copying Externalized CArchive Payload ==="
-
-          # Copy the standalone archive/PKG files generated from the ARM build
           if [ -d "$ARM_APP/Contents/MacOS/_internal" ]; then
             mkdir -p "$FINAL_APP/Contents/MacOS/_internal"
             cp -af "$ARM_APP/Contents/MacOS/_internal/." "$FINAL_APP/Contents/MacOS/_internal/"
           fi
 
-          # Ensure any loose .pkg archive files in Contents/Resources are copied over
           find "$ARM_APP/Contents/Resources" -maxdepth 2 -name "*.pkg" -o -name "pydata*" | while read -r pkg_file; do
             echo "Copying PKG archive payload: $(basename "$pkg_file")"
             cp -f "$pkg_file" "$FINAL_APP/Contents/Resources/"
