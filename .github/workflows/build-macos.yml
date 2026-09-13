@@ -155,21 +155,6 @@ jobs:
               start()
           EOF
 
-          TARGET_LIBS=(
-            "libgtk-3" "libgdk-3" "libpango" "libcairo" "libglib-2.0"
-            "libgio-2.0" "libgobject-2.0" "libgdk_pixbuf" "libatk-1.0"
-            "libharfbuzz" "libepoxy" "libfribidi" "libintl" "libpng"
-          )
-
-          BINARIES_ARG=()
-          for lib_prefix in "${TARGET_LIBS[@]}"; do
-            for matched_lib in "$BREW_PREFIX"/lib/${lib_prefix}*.dylib "$BREW_PREFIX"/opt/*/lib/${lib_prefix}*.dylib; do
-              if [ -f "$matched_lib" ]; then
-                BINARIES_ARG+=(--add-binary "$matched_lib:.")
-              fi
-            done
-          done
-
           export DYLD_LIBRARY_PATH="$BREW_PREFIX/lib:$BREW_PREFIX/opt/gtk+3/lib:$BREW_PREFIX/opt/pango/lib:$BREW_PREFIX/opt/cairo/lib:$BREW_PREFIX/opt/glib/lib:$DYLD_LIBRARY_PATH"
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_FALLBACK_LIBRARY_PATH"
           export PATH="$BREW_PREFIX/bin:$PATH"
@@ -180,11 +165,12 @@ jobs:
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
-            "${BINARIES_ARG[@]}" \
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=tkinter \
             --exclude-module=twisted.trial \
+            --collect-binaries=gi \
+            --collect-binaries=cairo \
             --collect-submodules=gi \
             --collect-data=deluge \
             --collect-submodules=twisted \
@@ -192,6 +178,8 @@ jobs:
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
+            --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
+            --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
@@ -235,7 +223,7 @@ jobs:
   create-universal-app:
     name: Stitch & Package Universal2 DMG
     needs: build-thin-apps
-    runs-on: macos-14
+    runs-on: macos-latest
     env:
       FINAL_APP: "${{ github.workspace }}/dist/Deluge.app"
     steps:
@@ -493,7 +481,7 @@ jobs:
         run: |
           cat <<EOF > entitlements.plist
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://apple.com">
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <!-- Required for PyInstaller execution -->
@@ -669,7 +657,9 @@ jobs:
           fi
 
           echo "=== Stapling Notarization Ticket ==="
+          sleep 5
           xcrun stapler staple "$DMG_NAME"
+          xcrun stapler validate "$DMG_NAME"
 
       - name: Upload Finished DMG Artifact
         uses: actions/upload-artifact@v4
