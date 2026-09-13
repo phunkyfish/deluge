@@ -39,7 +39,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          architecture: ${{ matrix.arch }}   # Explicitly pass arm64 vs x86_64
 
       - name: Install System Packaging Tools & Libtorrent
         env:
