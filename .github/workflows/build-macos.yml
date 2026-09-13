@@ -349,12 +349,40 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Generate native Universal2 main executable via PyInstaller
+          # 4. Generate Universal2 Launcher Executable with Real Boot Sequence
           echo "=== Building Native Universal2 Launcher Executable ==="
 
           cat <<'EOF' > run_deluge.py
+          import sys
+          import os
+          import builtins
+          import gettext
+
+          # Ensure bundle Resources and Frameworks are on the Python path
+          bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+          resources_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Resources'))
+          if resources_dir not in sys.path:
+              sys.path.insert(0, resources_dir)
+
+          # Set up translation builtins required by Deluge UI
+          try:
+              trans = gettext.translation('deluge', fallback=True)
+              builtins._ = trans.gettext
+          except Exception:
+              builtins._ = lambda msg: msg
+
+          if '_' not in builtins.__dict__:
+              builtins.__dict__['_'] = lambda msg: msg
+
+          # Launch main GTK interface
+          from deluge.ui.gtk3.gtkui import GtkUI
+
+          def start():
+              ui = GtkUI()
+              ui.start()
+
           if __name__ == '__main__':
-              pass
+              start()
           EOF
 
           python3 -m PyInstaller --onedir --windowed --name="Deluge" \
