@@ -497,35 +497,45 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 1. Repair Python.framework structure to satisfy codesign
-          echo "=== 1. Repairing Framework Structure for codesign ==="
           FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks/Python.framework"
 
-          if [ -d "$FRAMEWORK_DIR" ]; then
-            # Strip invalid Info.plist files that trigger bundle format errors
-            find "$FRAMEWORK_DIR" -name "Info.plist" -exec rm -f {} + 2>/dev/null || true
-
-            # Create standard macOS Framework layout if missing
-            mkdir -p "$FRAMEWORK_DIR/Versions/A"
-            if [ -f "$FRAMEWORK_DIR/Python" ] && [ ! -L "$FRAMEWORK_DIR/Python" ]; then
-              mv "$FRAMEWORK_DIR/Python" "$FRAMEWORK_DIR/Versions/A/Python"
-              ln -sf "Versions/A/Python" "$FRAMEWORK_DIR/Python"
-              ln -sf "A" "$FRAMEWORK_DIR/Versions/Current"
-            fi
+          # 1. Ensure Python.framework has a basic Info.plist if missing
+          echo "=== 1. Validating Framework Metadata ==="
+          if [ -d "$FRAMEWORK_DIR" ] && [ ! -f "$FRAMEWORK_DIR/Resources/Info.plist" ] && [ ! -f "$FRAMEWORK_DIR/Info.plist" ]; then
+            mkdir -p "$FRAMEWORK_DIR/Resources"
+            cat << 'EOF' > "$FRAMEWORK_DIR/Resources/Info.plist"
+            <?xml version= "1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>CFBundleDevelopmentRegion</key>
+                <string>English</string>
+                <key>CFBundleExecutable</key>
+                <string>Python</string>
+                <key>CFBundleIdentifier</key>
+                <string>org.python.python</string>
+                <key>CFBundleInfoDictionaryVersion</key>
+                <string>6.0</string>
+                <key>CFBundleName</key>
+                <string>Python</string>
+                <key>CFBundlePackageType</key>
+                <string>FMWK</string>
+            </dict>
+            </plist>
+            EOF
           fi
 
-          # 2. Sign All Internal Mach-O Binaries (.dylib, .so, Framework Binaries)
-          echo "=== 2. Signing Dynamic Libraries and Mach-O Binaries ==="
+          # 2. Sign All Standalone Mach-O Binaries (.dylib, .so)
+          echo "=== 2. Signing Dynamic Libraries and C-Extensions ==="
           FILES_TO_SIGN=$(mktemp)
           find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
           SIGNED_COUNT=0
           while read -r file; do
-            # Skip main executable for step 3
-            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ]; then
+            # Skip main launcher and files inside Python.framework (handled separately)
+            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ] && [[ "$file" != *"/Python.framework/"* ]]; then
               if file -b "$file" | grep -q "Mach-O"; then
                 codesign --force --options runtime --timestamp \
-                  --preserve-metadata=identifier,flags,entitlements \
                   --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
                   --keychain build.keychain "$file"
                 SIGNED_COUNT=$((SIGNED_COUNT + 1))
@@ -534,22 +544,30 @@ jobs:
           done < "$FILES_TO_SIGN"
           rm -f "$FILES_TO_SIGN"
 
-          echo "Signed $SIGNED_COUNT internal dynamic libraries."
+          echo "Signed $SIGNED_COUNT standalone dynamic libraries."
 
-          # 3. Sign Main Executable with Entitlements
-          echo "=== 3. Signing Main Executable ==="
+          # 3. Explicitly Sign Python.framework as a Subcomponent
+          echo "=== 3. Signing Python.framework Subcomponent ==="
+          if [ -d "$FRAMEWORK_DIR" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+              --keychain build.keychain "$FRAMEWORK_DIR"
+          fi
+
+          # 4. Sign Main Executable with Entitlements
+          echo "=== 4. Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 4. Sign Outer Application Bundle Envelope
-          echo "=== 4. Signing Outer Application Bundle ==="
+          # 5. Sign Outer Application Bundle Envelope
+          echo "=== 5. Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 5. Verify Signature
-          echo "=== 5. Verifying Bundle Signature ==="
+          # 6. Verify Signature
+          echo "=== 6. Verifying Bundle Signature ==="
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
 
