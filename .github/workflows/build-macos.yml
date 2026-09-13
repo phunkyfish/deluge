@@ -349,27 +349,25 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Stitch PyInstaller's Clean Bootstrapper Templates into Universal2
-          echo "=== Generating Universal2 PyInstaller Launcher Bootstrapper ==="
+          # 4. Lipo-stitch thin app bootstrappers into a native Universal2 launcher
+          echo "=== Generating Universal2 PyInstaller Launcher Executable ==="
 
-          # Locate PyInstaller's internal bootstrapper binaries in host environment
-          PYI_BOOT_DIR=$(python3 -c "import PyInstaller.bootloader as b; import os; print(os.path.dirname(b.__file__))")
+          ARM_LAUNCHER="$ARM_APP/Contents/MacOS/Deluge"
+          X86_LAUNCHER="$X86_APP/Contents/MacOS/Deluge"
 
-          ARM_BOOT="$PYI_BOOT_DIR/Darwin-64bit/runw"
-          X86_BOOT="$PYI_BOOT_DIR/Darwin-64bit-intel/runw"
-
-          # Fallback check if path naming differs in version
-          if [ ! -f "$X86_BOOT" ]; then
-            X86_BOOT=$(find "$PYI_BOOT_DIR" -name "runw" | grep -i "intel" | head -n 1)
-            ARM_BOOT=$(find "$PYI_BOOT_DIR" -name "runw" | grep -i "arm" | head -n 1)
+          if [ ! -f "$ARM_LAUNCHER" ] || [ ! -f "$X86_LAUNCHER" ]; then
+            echo "Error: Missing thin launcher binaries!"
+            echo "ARM launcher: $ARM_LAUNCHER"
+            echo "x86 launcher: $X86_LAUNCHER"
+            exit 1
           fi
 
-          echo "Using ARM Bootstrapper: $ARM_BOOT"
-          echo "Using x86 Bootstrapper: $X86_BOOT"
-
-          # Lipo merge the clean bootstrappers directly into the launcher executable
-          lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
+          echo "Merging ARM launcher ($ARM_LAUNCHER) and x86 launcher ($X86_LAUNCHER)..."
+          lipo -create "$ARM_LAUNCHER" "$X86_LAUNCHER" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
+
+          echo "=== Verifying Universal2 Launcher Slices ==="
+          lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
 
           # 5. Lipo-stitch Mach-O C-extensions and Frameworks cleanly
           echo "=== Merging C-extensions and Frameworks via lipo ==="
