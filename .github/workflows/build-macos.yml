@@ -161,6 +161,7 @@ jobs:
 
           # 6. Generate spec file and compile thin app
           pyi-makespec --onedir --windowed --name="Deluge" \
+            --contents-directory="_internal" \
             -d noarchive \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
@@ -331,7 +332,7 @@ jobs:
       - name: Stitch Thin Architectures into Universal2 Bundle
         run: |
           # 1. Clean workspace
-          rm -rf "$FINAL_APP" "$GITHUB_WORKSPACE/dist/tmp_launcher"
+          rm -rf "$FINAL_APP"
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
           # 2. Point directly to extracted Deluge.app bundles
@@ -349,30 +350,26 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Lipo-stitch thin app bootstrappers into a native Universal2 launcher
-          echo "=== Generating Universal2 PyInstaller Launcher Executable ==="
+          # 4. Lipo-stitch pure Mach-O launcher executable (no embedded CArchive)
+          echo "=== Generating Universal2 Launcher Executable ==="
 
           ARM_LAUNCHER="$ARM_APP/Contents/MacOS/Deluge"
           X86_LAUNCHER="$X86_APP/Contents/MacOS/Deluge"
 
           if [ ! -f "$ARM_LAUNCHER" ] || [ ! -f "$X86_LAUNCHER" ]; then
             echo "Error: Missing thin launcher binaries!"
-            echo "ARM launcher: $ARM_LAUNCHER"
-            echo "x86 launcher: $X86_LAUNCHER"
             exit 1
           fi
 
-          echo "Merging ARM launcher ($ARM_LAUNCHER) and x86 launcher ($X86_LAUNCHER)..."
+          echo "Merging ARM launcher and x86 launcher..."
           lipo -create "$ARM_LAUNCHER" "$X86_LAUNCHER" -output "$FINAL_APP/Contents/MacOS/Deluge"
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
 
           echo "=== Verifying Universal2 Launcher Slices ==="
           lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Lipo-stitch Mach-O C-extensions and Frameworks cleanly
-          echo "=== Merging C-extensions and Frameworks via lipo ==="
-
-          # Explicitly stitch Python binary directly to avoid broken symlink targets
+          # 5. Explicitly stitch Python binary target to preserve framework symlink structure
+          echo "=== Merging Python.framework Binary ==="
           ARM_PY=$(find "$ARM_APP" -path "*/Python.framework/*" -type f -name "Python" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
           X86_PY=$(find "$X86_APP" -path "*/Python.framework/*" -type f -name "Python" -exec file {} + | grep "Mach-O" | cut -d: -f1 | head -n 1)
 
@@ -381,29 +378,31 @@ jobs:
             mkdir -p "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11"
             lipo -create "$ARM_PY" "$X86_PY" -output "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/Python"
 
-            # Re-link top-level framework entry
+            # Re-link top-level framework entry cleanly
             ln -sf "Versions/3.11/Python" "$FINAL_APP/Contents/Frameworks/Python.framework/Python"
           fi
 
-          # Process all remaining dynamic libraries and .so binaries
-          if [ -d "$ARM_APP/Contents/Frameworks" ]; then
-            find "$ARM_APP/Contents/Frameworks" -type f ! -type l 2>/dev/null | while read -r arm_file; do
-              rel_path="${arm_file#$ARM_APP/Contents/Frameworks/}"
+          # 6. Recursively merge all remaining Mach-O binaries in Frameworks and Resources (_internal)
+          echo "=== Merging Dynamic Libraries (.dylib) and C-Extensions (.so) ==="
 
-              # Skip Python binary since it was explicitly stitched above
-              if [[ "$rel_path" == *"Python.framework/Python"* ]] || [[ "$rel_path" == *"Python.framework/Versions/"* ]]; then
-                continue
-              fi
+          find "$ARM_APP/Contents" -type f ! -type l 2>/dev/null | while read -r arm_file; do
+            rel_path="${arm_file#$ARM_APP/Contents/}"
 
-              x86_file="$X86_APP/Contents/Frameworks/$rel_path"
-              target_file="$FINAL_APP/Contents/Frameworks/$rel_path"
+            # Skip main executable and Python framework binary (handled explicitly above)
+            if [[ "$rel_path" == "MacOS/Deluge" ]] || [[ "$rel_path" == *"Python.framework/Python"* ]] || [[ "$rel_path" == *"Python.framework/Versions/"* ]]; then
+              continue
+            fi
 
-              if [ -f "$x86_file" ] && file -b "$arm_file" | grep -q "Mach-O"; then
-                echo "Lipo merging: $rel_path"
-                lipo -create "$arm_file" "$x86_file" -output "$target_file"
-              fi
-            done
-          fi
+            x86_file="$X86_APP/Contents/$rel_path"
+            target_file="$FINAL_APP/Contents/$rel_path"
+
+            # If matching x86 file exists and ARM file is Mach-O, lipo merge them
+            if [ -f "$x86_file" ] && file -b "$arm_file" | grep -q "Mach-O"; then
+              echo "Lipo merging: Contents/$rel_path"
+              mkdir -p "$(dirname "$target_file")"
+              lipo -create "$arm_file" "$x86_file" -output "$target_file"
+            fi
+          done
 
       - name: Clean Broken Symlinks in Bundle
         run: |
