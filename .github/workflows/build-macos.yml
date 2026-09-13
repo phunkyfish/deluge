@@ -39,6 +39,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          architecture: ${{ matrix.arch }}   # Explicitly pass arm64 vs x86_64
 
       - name: Install System Packaging Tools & Libtorrent
         env:
@@ -219,8 +220,12 @@ jobs:
           # Find the runw template used by this matrix runner
           RUNW_BIN=$(find "$PYI_DIR/bootloader" -name "runw" | head -n 1)
 
+          # Verify Mach-O slice matching matrix target
+          DETECTED_ARCH=$(file -b "$RUNW_BIN")
+          echo "Expected arch: ${{ matrix.arch }}"
+          echo "Detected arch: $DETECTED_ARCH"
+
           # Detect matrix runner arch to name the output file uniquely
-          ARCH_NAME=$(uname -m)
           echo "Current runner arch: ${{ matrix.arch }}"
           echo "Source bootloader: $RUNW_BIN"
 
