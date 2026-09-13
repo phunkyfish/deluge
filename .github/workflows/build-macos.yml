@@ -113,20 +113,25 @@ jobs:
           import ctypes
 
           bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
+          # Root and internal directories
+          internal_dir = os.path.join(bundle_dir, '_internal') if os.path.exists(os.path.join(bundle_dir, '_internal')) else bundle_dir
           frameworks_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Frameworks'))
           resources_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Resources'))
 
-          if not os.path.exists(frameworks_dir): frameworks_dir = bundle_dir
-          if not os.path.exists(resources_dir): resources_dir = bundle_dir
+          # Load dynamic libraries
+          search_paths = [internal_dir, frameworks_dir, bundle_dir]
+          for search_path in search_paths:
+              if os.path.exists(search_path):
+                  for dylib in os.listdir(search_path):
+                      if dylib.endswith('.dylib'):
+                          try: ctypes.CDLL(os.path.join(search_path, dylib))
+                          except Exception: pass
 
-          for dylib in os.listdir(frameworks_dir):
-              if dylib.endswith('.dylib'):
-                  try: ctypes.CDLL(os.path.join(frameworks_dir, dylib))
-                  except Exception: pass
-
-          os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
-          os.environ['DYLD_LIBRARY_PATH'] = f"{frameworks_dir}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
-          os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{bundle_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
+          path_str = ":".join(search_paths)
+          os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
+          os.environ['DYLD_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
+          os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{internal_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
           os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(resources_dir, 'glib-2.0', 'schemas')
           os.environ['XDG_DATA_DIRS'] = f"{resources_dir}:{os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')}"
           EOF
