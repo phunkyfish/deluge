@@ -523,6 +523,7 @@ jobs:
             </dict>
             </plist>
             EOF
+
           fi
 
           # 2. Sign All Standalone Mach-O Binaries (.dylib, .so)
