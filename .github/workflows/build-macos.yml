@@ -377,16 +377,12 @@ jobs:
           # 4. Compile Native Universal2 Launcher Executable
           echo "=== Compiling Native Universal2 Bootstrapper ==="
 
-          # Resolve absolute path to Python framework inside the staged app bundle
+          # 1. Fetch Python headers from the runner's Python installation
+          SYS_PYTHON_INCLUDES=$(python3-config --includes)
+          echo "System Python Includes: $SYS_PYTHON_INCLUDES"
+
+          # 2. Point Framework search path to the staged app bundle
           PY_FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks"
-          PY_INCLUDE_DIR="$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/include/python3.11"
-
-          # Fallback check if headers sit inside Python.framework or _internal
-          if [ ! -d "$PY_INCLUDE_DIR" ]; then
-            PY_INCLUDE_DIR=$(find "$FINAL_APP/Contents" -type d -name "python3.11" | grep "include" | head -n 1)
-          fi
-
-          echo "Using Python Headers from: $PY_INCLUDE_DIR"
 
           # Create lightweight C launcher source
           cat <<'EOF' > launcher.c
@@ -435,9 +431,9 @@ jobs:
           }
           EOF
 
-          # Compile natively for both arm64 and x86_64 targets
+          # Compile natively for both arm64 and x86_64 targets using host headers + bundled Framework
           clang -arch arm64 -arch x86_64 \
-            -I"$PY_INCLUDE_DIR" \
+            $SYS_PYTHON_INCLUDES \
             -F"$PY_FRAMEWORK_DIR" \
             -framework Python \
             -rpath "@executable_path/../Frameworks" \
