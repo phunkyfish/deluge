@@ -374,42 +374,68 @@ jobs:
           # 3. Establish base structure from ARM64 build into dist/Deluge.app
           cp -a "$ARM_APP" "$FINAL_APP"
 
-          # 4. Use Pure Universal2 Launcher Executable
-          echo "=== Setting Up Universal2 Launcher Executable ==="
+          # 4. Compile Native Universal2 Launcher Executable
+          echo "=== Compiling Native Universal2 Bootstrapper ==="
 
-          ARM_BOOT=$(find /tmp/thin_builds -name "runw_arm64" | head -n 1)
+          # Create lightweight launcher source
+          cat <<'EOF' > launcher.c
+          #include "Python.framework/Versions/3.11/include/python3.11/Python.h"
+          #include <libgen.h>
+          #include <limits.h>
+          #include <mach-o/dyld.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <unistd.h>
 
-          if [ ! -f "$ARM_BOOT" ]; then
-            echo "Error: Missing exported Universal2 runw bootloader!"
-            exit 1
-          fi
+          int main(int argc, char *argv[]) {
+              char path[PATH_MAX];
+              uint32_t size = sizeof(path);
+              if (_NSGetExecutablePath(path, &size) != 0) return 1;
 
-          # If runw is already fat universal2, use it directly!
-          if file -b "$ARM_BOOT" | grep -q "universal binary"; then
-            echo "Bootloader is already Universal2 fat binary, copying directly..."
-            cp "$ARM_BOOT" "$FINAL_APP/Contents/MacOS/Deluge"
-          else
-            # Fallback if thin slices were provided
-            X86_BOOT=$(find /tmp/thin_builds -name "runw_x86_64" | head -n 1)
-            echo "Merging thin slices into Universal2 binary..."
-            lipo -create "$ARM_BOOT" "$X86_BOOT" -output "$FINAL_APP/Contents/MacOS/Deluge"
-          fi
+              // Resolve directory containing the executable
+              char *exec_dir = dirname(path);
+
+              # Set Python Home to bundled Python.framework inside app bundle
+              char py_home[PATH_MAX];
+              snprintf(py_home, sizeof(py_home), "%s/../Frameworks/Python.framework/Versions/3.11", exec_dir);
+
+              wchar_t *w_py_home = Py_DecodeLocale(py_home, NULL);
+              Py_SetPythonHome(w_py_home);
+
+              Py_Initialize();
+
+              # Inject app entrypoint script into Python runtime
+              const char *script =
+                  "import sys, os, builtins, gettext\n"
+                  "bundle = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '..'))\n"
+                  "res = os.path.join(bundle, 'Resources')\n"
+                  "if res not in sys.path: sys.path.insert(0, res)\n"
+                  "try:\n"
+                  "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
+                  "except Exception:\n"
+                  "    builtins._ = lambda msg: msg\n"
+                  "from deluge.ui.gtk3.gtkui import GtkUI\n"
+                  "GtkUI().start()\n";
+
+              int result = PyRun_SimpleString(script);
+              Py_Finalize();
+              PyMem_RawFree(w_py_home);
+              return result;
+          }
+          EOF
+
+          # Compile natively for both x86_64 and arm64 targets simultaneously
+          clang -arch arm64 -arch x86_64 \
+            -I"$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/include/python3.11" \
+            -L"$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11" \
+            -lpython3.11 \
+            -rpath "@executable_path/../Frameworks/Python.framework/Versions/3.11" \
+            launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
+          rm -f launcher.c
 
-          # Preserve PyInstaller archive payload and Table of Contents
-          echo "=== Copying Externalized CArchive Payload ==="
-          if [ -d "$ARM_APP/Contents/MacOS/_internal" ]; then
-            mkdir -p "$FINAL_APP/Contents/MacOS/_internal"
-            cp -af "$ARM_APP/Contents/MacOS/_internal/." "$FINAL_APP/Contents/MacOS/_internal/"
-          fi
-
-          find "$ARM_APP/Contents/Resources" -maxdepth 2 -name "*.pkg" -o -name "pydata*" | while read -r pkg_file; do
-            echo "Copying PKG archive payload: $(basename "$pkg_file")"
-            cp -f "$pkg_file" "$FINAL_APP/Contents/Resources/"
-          done
-
-          echo "=== Verifying Universal2 Launcher Slices ==="
+          echo "=== Verifying Compiled Universal2 Executable ==="
           lipo -info "$FINAL_APP/Contents/MacOS/Deluge"
 
           # 5. Explicitly stitch Python binary target to preserve framework symlink structure
