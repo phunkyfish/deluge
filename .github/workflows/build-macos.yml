@@ -419,14 +419,12 @@ jobs:
           BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
           PY_INC="$BUNDLE_FRAMEWORKS/Python.framework/Versions/$PY_VER/include/python$PY_VER"
 
-          # Fallback to host includes if bundled headers were stripped by PyInstaller
           if [ ! -d "$PY_INC" ]; then
             PY_INC="/Library/Frameworks/Python.framework/Versions/$PY_VER/include/python$PY_VER"
           fi
 
           echo "Using Python $PY_VER Headers from: $PY_INC"
 
-          # Unquoted EOF allows shell variable expansion ($PY_VER) inside C source template
           cat <<EOF > launcher.c
           #include <Python.h>
           #include <libgen.h>
@@ -460,13 +458,31 @@ jobs:
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
               PyConfig_SetString(&config, &config.home, w_py_home);
 
+              // Force PyConfig to include Resources and Frameworks directly in C-level module search paths
+              config.module_search_paths_set = 1;
+
+              char p1[PATH_MAX], p2[PATH_MAX], p3[PATH_MAX], p4[PATH_MAX];
+              snprintf(p1, sizeof(p1), "%s/lib/python$PY_VER", canonical_py_home);
+              snprintf(p2, sizeof(p2), "%s/lib/python$PY_VER/lib-dynload", canonical_py_home);
+              snprintf(p3, sizeof(p3), "%s/../../Resources", canonical_py_home);
+              snprintf(p4, sizeof(p4), "%s/../../Frameworks", canonical_py_home);
+
+              char *paths[] = {p1, p2, p3, p4};
+              for (int i = 0; i < 4; i++) {
+                  wchar_t *w_path = Py_DecodeLocale(paths[i], NULL);
+                  if (w_path) {
+                      PyConfig_WideStringList_Append(&config, &config.module_search_paths, w_path);
+                      PyMem_RawFree(w_path);
+                  }
+              }
+
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
               PyMem_RawFree(w_py_home);
 
               if (PyStatus_Exception(status)) {
                   if (status.err_msg) {
-                  fprintf(stderr, "Python initialization error: %s\n", status.err_msg);
+                      fprintf(stderr, "Python initialization error: %s\n", status.err_msg);
                   }
                   return 1;
               }
