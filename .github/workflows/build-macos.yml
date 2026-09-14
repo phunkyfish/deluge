@@ -497,23 +497,14 @@ jobs:
                   return 1;
               }
 
-              // Explicitly add PyInstaller bundle directories to sys.path
               const char *script =
-                "import sys, os, builtins, gettext\n"
-                "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
-                "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
-                "res = os.path.join(bundle, 'Resources')\n"
-                "fw = os.path.join(bundle, 'Frameworks')\n"
-                "site_pkgs = os.path.join(fw, 'Python.framework', 'Versions', '$PY_VER', 'lib', 'python$PY_VER', 'site-packages')\n"
-                "for p in [res, fw, site_pkgs, exec_dir]:\n"
-                "    if os.path.exists(p) and p not in sys.path:\n"
-                "        sys.path.insert(0, p)\n"
-                "try:\n"
-                "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
-                "except Exception:\n"
-                "    builtins._ = lambda msg: msg\n"
-                "from deluge.ui.gtk3.gtkui import GtkUI\n"
-                "GtkUI().start()\n";
+                  "import sys, os, builtins, gettext\n"
+                  "try:\n"
+                  "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
+                  "except Exception:\n"
+                  "    builtins._ = lambda msg: msg\n"
+                  "from deluge.ui.gtk3.gtkui import GtkUI\n"
+                  "GtkUI().start()\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
