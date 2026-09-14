@@ -460,18 +460,23 @@ jobs:
                   return 1;
               }
 
-              // Inject app entrypoint script into Python runtime
+              // Explicitly add PyInstaller bundle directories to sys.path
               const char *script =
-                  "import sys, os, builtins, gettext\n"
-                  "bundle = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '..'))\n"
-                  "res = os.path.join(bundle, 'Resources')\n"
-                  "if res not in sys.path: sys.path.insert(0, res)\n"
-                  "try:\n"
-                  "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
-                  "except Exception:\n"
-                  "    builtins._ = lambda msg: msg\n"
-                  "from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "GtkUI().start()\n";
+                "import sys, os, builtins, gettext\n"
+                "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+                "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
+                "internal = os.path.join(exec_dir, '_internal')\n"
+                "res = os.path.join(bundle, 'Resources')\n"
+                "fw = os.path.join(bundle, 'Frameworks')\n"
+                "for p in [internal, res, exec_dir]:\n"
+                "    if os.path.exists(p) and p not in sys.path:\n"
+                "        sys.path.insert(0, p)\n"
+                "try:\n"
+                "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
+                "except Exception:\n"
+                "    builtins._ = lambda msg: msg\n"
+                "from deluge.ui.gtk3.gtkui import GtkUI\n"
+                "GtkUI().start()\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
