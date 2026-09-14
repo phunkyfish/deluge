@@ -463,7 +463,10 @@ jobs:
               PyMem_RawFree(w_py_home);
 
               if (PyStatus_Exception(status)) {
-                  PyStatus_PrintAndExit(status);
+                  if (status.err_msg) {
+                  fprintf(stderr, "Python initialization error: %s\n", status.err_msg);
+                  }
+                  return 1;
               }
 
               // Explicitly add PyInstaller bundle directories to sys.path
