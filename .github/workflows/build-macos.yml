@@ -443,8 +443,9 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
+              // 1. Point Python Home to Resources where PyInstaller drops stdlib & encodings
               char raw_py_home[PATH_MAX];
-              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks/Python.framework/Versions/$PY_VER", exec_dir);
+              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Resources", exec_dir);
 
               char canonical_py_home[PATH_MAX];
               if (!realpath(raw_py_home, canonical_py_home)) {
