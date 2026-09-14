@@ -458,7 +458,11 @@ jobs:
               PyConfig_InitIsolatedConfig(&config);
 
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
+
+              // Set home and base prefixes to Resources so CPython checks Resources/encodings directly
               PyConfig_SetString(&config, &config.home, w_py_home);
+              PyConfig_SetString(&config, &config.base_prefix, w_py_home);
+              PyConfig_SetString(&config, &config.prefix, w_py_home);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
