@@ -106,21 +106,18 @@ jobs:
               pass
           EOF
 
-          # 4. Generate GI runtime hook
+          # 4. Generate Cleaned GI runtime hook
           cat <<'EOF' > gi_runtime_hook.py
           import os
           import sys
           import ctypes
 
           bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-
-          # Root and internal directories
-          internal_dir = os.path.join(bundle_dir, '_internal') if os.path.exists(os.path.join(bundle_dir, '_internal')) else bundle_dir
           frameworks_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Frameworks'))
           resources_dir = os.path.abspath(os.path.join(bundle_dir, '..', 'Resources'))
 
           # Load dynamic libraries
-          search_paths = [internal_dir, frameworks_dir, bundle_dir]
+          search_paths = [bundle_dir, frameworks_dir]
           for search_path in search_paths:
               if os.path.exists(search_path):
                   for dylib in os.listdir(search_path):
@@ -131,7 +128,7 @@ jobs:
           path_str = ":".join(search_paths)
           os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
           os.environ['DYLD_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
-          os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{internal_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
+          os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
           os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(resources_dir, 'glib-2.0', 'schemas')
           os.environ['XDG_DATA_DIRS'] = f"{resources_dir}:{os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')}"
           EOF
@@ -164,10 +161,8 @@ jobs:
           export DYLD_FALLBACK_LIBRARY_PATH="$BREW_PREFIX/lib:$DYLD_FALLBACK_LIBRARY_PATH"
           export PATH="$BREW_PREFIX/bin:$PATH"
 
-          # 6. Generate spec file and compile thin app
+          # 6. Generate spec file and compile thin app (Cleaned pyi-makespec)
           pyi-makespec --onedir --windowed --name="Deluge" \
-            --contents-directory="_internal" \
-            -d noarchive \
             --runtime-hook=fix_pkgres_hook.py \
             --runtime-hook=gi_runtime_hook.py \
             -i "deluge/ui/data/pixmaps/deluge.icns" \
@@ -202,13 +197,13 @@ jobs:
 
           [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
 
-          # 4. STRIP BINARIES
+          # STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
           find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" \) | while read -r bin; do
             strip -x "$bin" 2>/dev/null || true
           done
 
-          # 5. Clean unnecessary pyinstaller bloat inside app bundle
+          # Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
       - name: Export PyInstaller Raw Bootloader Template
@@ -216,16 +211,11 @@ jobs:
           echo "=== Exporting Raw PyInstaller Bootloader Template ==="
           PYI_DIR=$(python3 -c "import PyInstaller; import os; print(os.path.dirname(PyInstaller.__file__))")
 
-          # Find the runw template used by this matrix runner
           RUNW_BIN=$(find "$PYI_DIR/bootloader" -name "runw" | head -n 1)
 
-          # Verify Mach-O slice matching matrix target
           DETECTED_ARCH=$(file -b "$RUNW_BIN")
           echo "Expected arch: ${{ matrix.arch }}"
           echo "Detected arch: $DETECTED_ARCH"
-
-          # Detect matrix runner arch to name the output file uniquely
-          echo "Current runner arch: ${{ matrix.arch }}"
           echo "Source bootloader: $RUNW_BIN"
 
           cp "$RUNW_BIN" "$GITHUB_WORKSPACE/dist/runw_${{ matrix.arch }}"
@@ -270,7 +260,6 @@ jobs:
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
           python3 -m pip install "Cython<3.0" poetry-core pygobject pycairo
 
-          # Resolve version file just like in Job 1/2 to avoid version.py errors
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             APP_VERSION="${GITHUB_REF_NAME#deluge-}"
           else
@@ -278,7 +267,6 @@ jobs:
           fi
           find . -name "version.py" -exec sed -i '' "s/def get_version.*/def get_version(*args, **kwargs):\n    return '${APP_VERSION}'/g" {} +
 
-          # Install deluge in editable mode without build isolation
           python3 -m pip install --no-build-isolation --no-deps -e .
 
       - name: Download Thin App Artifacts
@@ -291,7 +279,6 @@ jobs:
           mkdir -p /tmp/thin_builds/arm64_extracted
           mkdir -p /tmp/thin_builds/x86_extracted
 
-          # Extract archives
           tar -xf /tmp/thin_builds/deluge-thin-arm64/deluge-thin-arm64.tar -C /tmp/thin_builds/arm64_extracted
           tar -xf /tmp/thin_builds/deluge-thin-x86_64/deluge-thin-x86_64.tar -C /tmp/thin_builds/x86_extracted
 
@@ -308,7 +295,6 @@ jobs:
           echo "       THIN APP ARTIFACT HEALTH INVENTORY         "
           echo "=================================================="
 
-          # Overall Footprint
           BUNDLE_SIZE=$(du -sh "$ARM_APP" | cut -f1)
           TOTAL_SYMLINKS=$(find "$ARM_APP" -type l | wc -l | tr -d ' ')
           TOTAL_FILES=$(find "$ARM_APP" -type f | wc -l | tr -d ' ')
@@ -318,16 +304,11 @@ jobs:
           echo "Total Symlinks      : $TOTAL_SYMLINKS"
           echo "--------------------------------------------------"
 
-          # Category Breakdown Function
           count_breakdown() {
             local ext="$1"
             local label="$2"
-
-            # Count physical files (-type f) excluding symlinks
             local real_files=$(find "$ARM_APP" -type f -name "*$ext" ! -type l | wc -l | tr -d ' ')
-            # Count symlinks (-type l) matching extension
             local symlinks=$(find "$ARM_APP" -type l -name "*$ext" | wc -l | tr -d ' ')
-
             printf "%-12s | Real Files: %-5s | Symlinks: %-5s\n" "$label" "$real_files" "$symlinks"
           }
 
@@ -344,7 +325,6 @@ jobs:
           done
           echo "=================================================="
 
-          # Fail fast if symlinks dereferenced to zero again
           if [ "$TOTAL_SYMLINKS" -eq 0 ]; then
             echo "CRITICAL ERROR: Symlinks count is 0! Artifact dereferencing has recurred."
             exit 1
@@ -389,11 +369,10 @@ jobs:
             exit 1
           fi
 
-          # Ensure internal framework ID is relative
           install_name_tool -id "@rpath/Python.framework/Versions/3.11/Python" \
             "$FINAL_APP/Contents/Frameworks/Python.framework/Versions/3.11/Python"
 
-          # 5. Recursively merge all remaining Mach-O binaries in Frameworks and Resources
+          # 5. Recursively merge all remaining Mach-O binaries
           echo "=== Merging Dynamic Libraries (.dylib) and C-Extensions (.so) ==="
           find "$ARM_APP/Contents" -type f ! -type l 2>/dev/null | while read -r arm_file; do
             rel_path="${arm_file#$ARM_APP/Contents/}"
@@ -443,29 +422,25 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
-              // 1. Point Python Home to Resources where PyInstaller drops stdlib & encodings
+              // Standard CPython Framework Home Resolution
               char raw_py_home[PATH_MAX];
-              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Resources", exec_dir);
+              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks/Python.framework/Versions/%s", exec_dir, "$PY_VER");
 
               char canonical_py_home[PATH_MAX];
               if (!realpath(raw_py_home, canonical_py_home)) {
-                  fprintf(stderr, "Error: Could not resolve Python framework home at %s\n", raw_py_home);
-                  return 1;
+                  // Fallback to Resources if Framework is mapped directly
+                  snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Resources", exec_dir);
+                  if (!realpath(raw_py_home, canonical_py_home)) {
+                      fprintf(stderr, "Error: Could not resolve Python home path\n");
+                      return 1;
+                  }
               }
 
               PyConfig config;
-              // Use Isolated Config to prevent CPython from looking at system/site paths or getting confused by custom flags
               PyConfig_InitIsolatedConfig(&config);
 
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
-
-              // Set home and base prefixes to Resources so CPython checks Resources/encodings directly
               PyConfig_SetString(&config, &config.home, w_py_home);
-              PyConfig_SetString(&config, &config.base_prefix, w_py_home);
-              PyConfig_SetString(&config, &config.prefix, w_py_home);
-
-              // Explicitly point stdlib_dir to Resources root where encodings/ actually lives
-              PyConfig_SetString(&config, &config.stdlib_dir, w_py_home);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
@@ -598,14 +573,12 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <!-- Required for PyInstaller execution -->
               <key>com.apple.security.cs.allow-jit</key>
               <true/>
               <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
               <true/>
               <key>com.apple.security.cs.disable-executable-page-protection</key>
               <true/>
-              <!-- Required to load signed GTK / Python dynamic modules -->
               <key>com.apple.security.cs.disable-library-validation</key>
               <true/>
           </dict>
@@ -626,7 +599,6 @@ jobs:
 
           FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks/Python.framework"
 
-          # 1. Ensure Python.framework has a basic Info.plist if missing
           echo "=== 1. Validating Framework Metadata ==="
           if [ -d "$FRAMEWORK_DIR" ] && [ ! -f "$FRAMEWORK_DIR/Resources/Info.plist" ] && [ ! -f "$FRAMEWORK_DIR/Info.plist" ]; then
             mkdir -p "$FRAMEWORK_DIR/Resources"
@@ -651,14 +623,12 @@ jobs:
               '</plist>' > "$FRAMEWORK_DIR/Resources/Info.plist"
           fi
 
-          # 2. Sign All Standalone Mach-O Binaries (.dylib, .so)
           echo "=== 2. Signing Dynamic Libraries and C-Extensions ==="
           FILES_TO_SIGN=$(mktemp)
           find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
           SIGNED_COUNT=0
           while read -r file; do
-            # Skip main launcher and files inside Python.framework (handled separately)
             if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ] && [[ "$file" != *"/Python.framework/"* ]]; then
               if file -b "$file" | grep -q "Mach-O"; then
                 codesign --force --options runtime --timestamp \
@@ -672,7 +642,6 @@ jobs:
 
           echo "Signed $SIGNED_COUNT standalone dynamic libraries."
 
-          # 3. Explicitly Sign Python.framework as a Subcomponent
           echo "=== 3. Signing Python.framework Subcomponent ==="
           if [ -d "$FRAMEWORK_DIR" ]; then
             codesign --force --options runtime --timestamp \
@@ -680,19 +649,16 @@ jobs:
               --keychain build.keychain "$FRAMEWORK_DIR"
           fi
 
-          # 4. Sign Main Executable with Entitlements
           echo "=== 4. Signing Main Executable ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # 5. Sign Outer Application Bundle Envelope
           echo "=== 5. Signing Outer Application Bundle ==="
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
-          # 6. Verify Signature
           echo "=== 6. Verifying Bundle Signature ==="
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
@@ -719,7 +685,6 @@ jobs:
           echo "RESOLVED_APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
           DMG_FILE="Deluge-${APP_VERSION}-Universal.dmg"
 
-          # Clear previous artifacts and create clean staging directory
           rm -rf secure_dmg_staging "$DMG_FILE"
           mkdir -p secure_dmg_staging
           ditto "$GITHUB_WORKSPACE/dist/Deluge.app" secure_dmg_staging/Deluge.app
