@@ -464,6 +464,9 @@ jobs:
               PyConfig_SetString(&config, &config.base_prefix, w_py_home);
               PyConfig_SetString(&config, &config.prefix, w_py_home);
 
+              // Explicitly point stdlib_dir to Resources root where encodings/ actually lives
+              PyConfig_SetString(&config, &config.stdlib_dir, w_py_home);
+
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
               PyMem_RawFree(w_py_home);
