@@ -419,9 +419,18 @@ jobs:
           HOST_FRAMEWORKS="/Library/Frameworks"
           BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
 
-          BUNDLED_PY_DIR=$(find "$FINAL_APP/Contents/Frameworks/Python.framework/Versions" -maxdepth 1 -mindepth 1 -type d | head -n 1)
-          BUNDLED_PY_VER=$(basename "$BUNDLED_PY_DIR")
-          echo "Detected Bundled Python Version: $BUNDLED_PY_VER"
+          # 1. Locate actual stdlib directory to find TRUE Python version inside bundle
+          STDLIB_DIR=$(find "$FINAL_APP/Contents/Frameworks/Python.framework/Versions" -type d -name "encodings" | head -n 1)
+
+          if [ -n "$STDLIB_DIR" ]; then
+            # Extract parent version directory (e.g. .../lib/python3.14/encodings -> 3.14)
+            BUNDLED_PY_VER=$(echo "$STDLIB_DIR" | grep -oE 'python3\.[0-9]+' | sed 's/python//')
+          else
+            # Fallback: check highest version directory under Versions/
+            BUNDLED_PY_VER=$(ls -1 "$FINAL_APP/Contents/Frameworks/Python.framework/Versions" | grep -E '^[0-9]' | sort -V | tail -n 1)
+          fi
+
+          echo "True Bundled Python Version: $BUNDLED_PY_VER"
 
           cat <<EOF > launcher.c
           #include <Python.h>
