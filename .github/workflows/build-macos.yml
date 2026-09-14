@@ -453,38 +453,11 @@ jobs:
               }
 
               PyConfig config;
-              PyConfig_InitPythonConfig(&config);
+              // Use Isolated Config to prevent CPython from looking at system/site paths or getting confused by custom flags
+              PyConfig_InitIsolatedConfig(&config);
 
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
               PyConfig_SetString(&config, &config.home, w_py_home);
-              PyConfig_SetString(&config, &config.prefix, w_py_home);
-              PyConfig_SetString(&config, &config.exec_prefix, w_py_home);
-
-              // 1. Explicitly set stdlib_dir so CPython finds encodings on boot
-              char stdlib[PATH_MAX];
-              snprintf(stdlib, sizeof(stdlib), "%s/lib/python$PY_VER", canonical_py_home);
-              wchar_t *w_stdlib = Py_DecodeLocale(stdlib, NULL);
-              PyConfig_SetString(&config, &config.stdlib_dir, w_stdlib);
-              PyMem_RawFree(w_stdlib);
-
-              // 2. Override search paths while keeping stdlib intact
-              config.module_search_paths_set = 1;
-
-              char p1[PATH_MAX], p2[PATH_MAX], p3[PATH_MAX], p4[PATH_MAX], p5[PATH_MAX];
-              snprintf(p1, sizeof(p1), "%s/lib/python$PY_VER", canonical_py_home);
-              snprintf(p2, sizeof(p2), "%s/lib/python$PY_VER/lib-dynload", canonical_py_home);
-              snprintf(p3, sizeof(p3), "%s/lib/python$PY_VER/site-packages", canonical_py_home);
-              snprintf(p4, sizeof(p4), "%s/../../Resources", canonical_py_home);
-              snprintf(p5, sizeof(p5), "%s/../../Frameworks", canonical_py_home);
-
-              char *paths[] = {p1, p2, p3, p4, p5};
-              for (int i = 0; i < 5; i++) {
-                  wchar_t *w_path = Py_DecodeLocale(paths[i], NULL);
-                  if (w_path) {
-                      PyWideStringList_Append(&config.module_search_paths, w_path);
-                      PyMem_RawFree(w_path);
-                  }
-              }
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
@@ -497,8 +470,17 @@ jobs:
                   return 1;
               }
 
+              // High-priority sys.path injection at Python runtime
               const char *script =
                   "import sys, os, builtins, gettext\n"
+                  "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+                  "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
+                  "res = os.path.join(bundle, 'Resources')\n"
+                  "fw = os.path.join(bundle, 'Frameworks')\n"
+                  "site_pkgs = os.path.join(fw, 'Python.framework', 'Versions', '$PY_VER', 'lib', 'python$PY_VER', 'site-packages')\n"
+                  "for p in [res, fw, site_pkgs, exec_dir]:\n"
+                  "    if os.path.exists(p) and p not in sys.path:\n"
+                  "        sys.path.insert(0, p)\n"
                   "try:\n"
                   "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
                   "except Exception:\n"
