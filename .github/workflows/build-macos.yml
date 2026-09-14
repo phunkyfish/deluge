@@ -471,7 +471,7 @@ jobs:
               for (int i = 0; i < 4; i++) {
                   wchar_t *w_path = Py_DecodeLocale(paths[i], NULL);
                   if (w_path) {
-                      PyConfig_WideStringList_Append(&config, &config.module_search_paths, w_path);
+                      PyWideStringList_Append(&config.module_search_paths, w_path);
                       PyMem_RawFree(w_path);
                   }
               }
