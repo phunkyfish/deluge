@@ -415,23 +415,18 @@ jobs:
           # 6. Compile Native Universal2 Launcher Executable
           echo "=== Compiling Native Universal2 Bootstrapper ==="
 
-          SYS_PYTHON_INCLUDES=$(python3-config --includes)
-          HOST_FRAMEWORKS="/Library/Frameworks"
+          PY_VER="3.11"
           BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
+          PY_INC="$BUNDLE_FRAMEWORKS/Python.framework/Versions/$PY_VER/include/python$PY_VER"
 
-          # 1. Locate actual stdlib directory to find TRUE Python version inside bundle
-          STDLIB_DIR=$(find "$FINAL_APP/Contents/Frameworks/Python.framework/Versions" -type d -name "encodings" | head -n 1)
-
-          if [ -n "$STDLIB_DIR" ]; then
-            # Extract parent version directory (e.g. .../lib/python3.14/encodings -> 3.14)
-            BUNDLED_PY_VER=$(echo "$STDLIB_DIR" | grep -oE 'python3\.[0-9]+' | sed 's/python//')
-          else
-            # Fallback: check highest version directory under Versions/
-            BUNDLED_PY_VER=$(ls -1 "$FINAL_APP/Contents/Frameworks/Python.framework/Versions" | grep -E '^[0-9]' | sort -V | tail -n 1)
+          # Fallback to host includes if bundled headers were stripped by PyInstaller
+          if [ ! -d "$PY_INC" ]; then
+            PY_INC="/Library/Frameworks/Python.framework/Versions/$PY_VER/include/python$PY_VER"
           fi
 
-          echo "True Bundled Python Version: $BUNDLED_PY_VER"
+          echo "Using Python $PY_VER Headers from: $PY_INC"
 
+          # Unquoted EOF allows shell variable expansion ($PY_VER) inside C source template
           cat <<EOF > launcher.c
           #include <Python.h>
           #include <libgen.h>
@@ -446,14 +441,12 @@ jobs:
               uint32_t size = sizeof(path);
               if (_NSGetExecutablePath(path, &size) != 0) return 1;
 
-              // Resolve absolute canonical path of executable directory
               char resolved_path[PATH_MAX];
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
-              // Build raw Python Home path and resolve all '..' to a clean canonical path
               char raw_py_home[PATH_MAX];
-              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks/Python.framework/Versions/$BUNDLED_PY_VER", exec_dir);
+              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks/Python.framework/Versions/$PY_VER", exec_dir);
 
               char canonical_py_home[PATH_MAX];
               if (!realpath(raw_py_home, canonical_py_home)) {
@@ -485,7 +478,7 @@ jobs:
                 "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
                 "res = os.path.join(bundle, 'Resources')\n"
                 "fw = os.path.join(bundle, 'Frameworks')\n"
-                "site_pkgs = os.path.join(fw, 'Python.framework', 'Versions', '$BUNDLED_PY_VER', 'lib', 'python$BUNDLED_PY_VER', 'site-packages')\n"
+                "site_pkgs = os.path.join(fw, 'Python.framework', 'Versions', '$PY_VER', 'lib', 'python$PY_VER', 'site-packages')\n"
                 "for p in [res, fw, site_pkgs, exec_dir]:\n"
                 "    if os.path.exists(p) and p not in sys.path:\n"
                 "        sys.path.insert(0, p)\n"
@@ -502,27 +495,24 @@ jobs:
           }
           EOF
 
-          # Compile launcher
+          # Compile explicitly targeting Python version framework inside the bundle
           clang -arch arm64 -arch x86_64 \
-            $SYS_PYTHON_INCLUDES \
-            -F"$HOST_FRAMEWORKS" \
+            -I"$PY_INC" \
             -F"$BUNDLE_FRAMEWORKS" \
             -framework Python \
             -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
-          echo "=== Fixing Executable Dynamic Linker Paths ==="
+          # Fix the internal framework ID path in the executable
           HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/Deluge" | grep "Python.framework" | awk '{print $1}' | sort -u | head -n 1)
-          TARGET_RPATH="@rpath/Python.framework/Versions/$BUNDLED_PY_VER/Python"
-
           if [ -n "$HARDCODED_PATH" ]; then
-            install_name_tool -change "$HARDCODED_PATH" "$TARGET_RPATH" "$FINAL_APP/Contents/MacOS/Deluge"
+            install_name_tool -change "$HARDCODED_PATH" "@rpath/Python.framework/Versions/$PY_VER/Python" "$FINAL_APP/Contents/MacOS/Deluge"
           fi
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           rm -f launcher.c
 
-          echo "=== Verifying Updated Dependencies ==="
+          echo "=== Verifying Built Python $PY_VER Executable Dependencies ==="
           otool -L "$FINAL_APP/Contents/MacOS/Deluge"
 
       - name: Clean Broken Symlinks in Bundle
