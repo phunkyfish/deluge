@@ -456,25 +456,13 @@ jobs:
               PyConfig_InitPythonConfig(&config);
 
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
+
+              // Set standard home, prefix, and exec_prefix so Python discovers its stdlib dir natively
               PyConfig_SetString(&config, &config.home, w_py_home);
-
-              // Force PyConfig to include Resources and Frameworks directly in C-level module search paths
-              config.module_search_paths_set = 1;
-
-              char p1[PATH_MAX], p2[PATH_MAX], p3[PATH_MAX], p4[PATH_MAX];
-              snprintf(p1, sizeof(p1), "%s/lib/python$PY_VER", canonical_py_home);
-              snprintf(p2, sizeof(p2), "%s/lib/python$PY_VER/lib-dynload", canonical_py_home);
-              snprintf(p3, sizeof(p3), "%s/../../Resources", canonical_py_home);
-              snprintf(p4, sizeof(p4), "%s/../../Frameworks", canonical_py_home);
-
-              char *paths[] = {p1, p2, p3, p4};
-              for (int i = 0; i < 4; i++) {
-                  wchar_t *w_path = Py_DecodeLocale(paths[i], NULL);
-                  if (w_path) {
-                      PyWideStringList_Append(&config.module_search_paths, w_path);
-                      PyMem_RawFree(w_path);
-                  }
-              }
+              PyConfig_SetString(&config, &config.prefix, w_py_home);
+              PyConfig_SetString(&config, &config.exec_prefix, w_py_home);
+              PyConfig_SetString(&config, &config.base_prefix, w_py_home);
+              PyConfig_SetString(&config, &config.base_exec_prefix, w_py_home);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
@@ -511,7 +499,6 @@ jobs:
           }
           EOF
 
-          # Compile explicitly targeting Python version framework inside the bundle
           clang -arch arm64 -arch x86_64 \
             -I"$PY_INC" \
             -F"$BUNDLE_FRAMEWORKS" \
@@ -519,7 +506,6 @@ jobs:
             -rpath "@executable_path/../Frameworks" \
             launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
 
-          # Fix the internal framework ID path in the executable
           HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/Deluge" | grep "Python.framework" | awk '{print $1}' | sort -u | head -n 1)
           if [ -n "$HARDCODED_PATH" ]; then
             install_name_tool -change "$HARDCODED_PATH" "@rpath/Python.framework/Versions/$PY_VER/Python" "$FINAL_APP/Contents/MacOS/Deluge"
