@@ -170,6 +170,7 @@ jobs:
             --exclude-module=Pillow \
             --exclude-module=tkinter \
             --exclude-module=twisted.trial \
+            --collect-all=deluge \
             --collect-binaries=gi \
             --collect-binaries=cairo \
             --collect-submodules=gi \
@@ -461,6 +462,19 @@ jobs:
 
               const char *script =
                 "import sys, os, builtins\n"
+                "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+                "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
+                "res = os.path.join(bundle, 'Resources')\n"
+                "fw = os.path.join(bundle, 'Frameworks')\n"
+                "paths_to_add = [res, fw, exec_dir]\n"
+                "if os.path.exists(res):\n"
+                "    for item in os.listdir(res):\n"
+                "        full_p = os.path.join(res, item)\n"
+                "        if os.path.isdir(full_p):\n"
+                "            paths_to_add.append(full_p)\n"
+                "for p in paths_to_add:\n"
+                "    if p not in sys.path:\n"
+                "        sys.path.insert(0, p)\n"
                 "try:\n"
                 "    import gettext\n"
                 "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
