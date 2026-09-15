@@ -422,29 +422,34 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
-              // 1. Point Python Home to Frameworks where physical dynamic libs & C-extensions live
-              char raw_py_home[PATH_MAX];
-              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks", exec_dir);
-
-              char canonical_py_home[PATH_MAX];
-              if (!realpath(raw_py_home, canonical_py_home)) {
-                  fprintf(stderr, "Error: Could not resolve Frameworks path at %s\n", raw_py_home);
-                  return 1;
-              }
+              // Resolve absolute pathing relative to MacOS/ binary location
+              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX];
+              snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
+              snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
+              snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
 
-              wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
+              // Override default CPython sys.path generation
+              config.module_search_paths_set = 1;
 
-              // Set home and prefixes to Frameworks root
-              PyConfig_SetString(&config, &config.home, w_py_home);
-              PyConfig_SetString(&config, &config.base_prefix, w_py_home);
-              PyConfig_SetString(&config, &config.prefix, w_py_home);
+              // Convert paths to wide strings for CPython 3.11 config API
+              wchar_t *w_zip = Py_DecodeLocale(zip_path, NULL);
+              wchar_t *w_fw  = Py_DecodeLocale(fw_dir, NULL);
+              wchar_t *w_res = Py_DecodeLocale(res_dir, NULL);
+
+              // Inject search paths into C runtime BEFORE initialization
+              PyWideStringList_Append(&config.module_search_paths, w_zip);
+              PyWideStringList_Append(&config.module_search_paths, w_fw);
+              PyWideStringList_Append(&config.module_search_paths, w_res);
+
+              PyMem_RawFree(w_zip);
+              PyMem_RawFree(w_fw);
+              PyMem_RawFree(w_res);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
-              PyMem_RawFree(w_py_home);
 
               if (PyStatus_Exception(status)) {
                   if (status.err_msg) {
@@ -453,17 +458,8 @@ jobs:
                   return 1;
               }
 
-              // 2. Prepend base_library.zip (from Resources) and search paths explicitly
               const char *script =
                   "import sys, os, builtins, gettext\n"
-                  "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
-                  "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
-                  "res = os.path.join(bundle, 'Resources')\n"
-                  "fw = os.path.join(bundle, 'Frameworks')\n"
-                  "zip_path = os.path.join(res, 'base_library.zip')\n"
-                  "for p in [zip_path, fw, res, exec_dir]:\n"
-                  "    if os.path.exists(p) and p not in sys.path:\n"
-                  "        sys.path.insert(0, p)\n"
                   "try:\n"
                   "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
                   "except Exception:\n"
