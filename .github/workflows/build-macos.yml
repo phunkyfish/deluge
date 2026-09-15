@@ -177,10 +177,14 @@ jobs:
             --collect-data=deluge \
             --collect-submodules=twisted \
             --collect-submodules=zope.interface \
+            --collect-submodules=logging \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
             --hidden-import=gettext \
+            --hidden-import=logging \
+            --hidden-import=logging.config \
+            --hidden-import=logging.handlers \
             --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
             --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
@@ -466,14 +470,9 @@ jobs:
                 "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
                 "res = os.path.join(bundle, 'Resources')\n"
                 "fw = os.path.join(bundle, 'Frameworks')\n"
-                "paths_to_add = [res, fw, exec_dir]\n"
-                "if os.path.exists(res):\n"
-                "    for item in os.listdir(res):\n"
-                "        full_p = os.path.join(res, item)\n"
-                "        if os.path.isdir(full_p):\n"
-                "            paths_to_add.append(full_p)\n"
-                "for p in paths_to_add:\n"
-                "    if p not in sys.path:\n"
+                "zip_path = os.path.join(res, 'base_library.zip')\n"
+                "for p in [zip_path, fw, res, exec_dir]:\n"
+                "    if os.path.exists(p) and p not in sys.path:\n"
                 "        sys.path.insert(0, p)\n"
                 "try:\n"
                 "    import gettext\n"
