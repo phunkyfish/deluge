@@ -422,25 +422,25 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
-              // Standard CPython Framework Home Resolution
+              // 1. Point Python Home to Frameworks where physical dynamic libs & C-extensions live
               char raw_py_home[PATH_MAX];
-              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks/Python.framework/Versions/%s", exec_dir, "$PY_VER");
+              snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Frameworks", exec_dir);
 
               char canonical_py_home[PATH_MAX];
               if (!realpath(raw_py_home, canonical_py_home)) {
-                  // Fallback to Resources if Framework is mapped directly
-                  snprintf(raw_py_home, sizeof(raw_py_home), "%s/../Resources", exec_dir);
-                  if (!realpath(raw_py_home, canonical_py_home)) {
-                      fprintf(stderr, "Error: Could not resolve Python home path\n");
-                      return 1;
-                  }
+                  fprintf(stderr, "Error: Could not resolve Frameworks path at %s\n", raw_py_home);
+                  return 1;
               }
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
 
               wchar_t *w_py_home = Py_DecodeLocale(canonical_py_home, NULL);
+
+              // Set home and prefixes to Frameworks root
               PyConfig_SetString(&config, &config.home, w_py_home);
+              PyConfig_SetString(&config, &config.base_prefix, w_py_home);
+              PyConfig_SetString(&config, &config.prefix, w_py_home);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
@@ -453,15 +453,15 @@ jobs:
                   return 1;
               }
 
-              // High-priority sys.path injection at Python runtime
+              // 2. Prepend base_library.zip (from Resources) and search paths explicitly
               const char *script =
                   "import sys, os, builtins, gettext\n"
                   "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
                   "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
                   "res = os.path.join(bundle, 'Resources')\n"
                   "fw = os.path.join(bundle, 'Frameworks')\n"
-                  "site_pkgs = os.path.join(fw, 'Python.framework', 'Versions', '$PY_VER', 'lib', 'python$PY_VER', 'site-packages')\n"
-                  "for p in [res, fw, site_pkgs, exec_dir]:\n"
+                  "zip_path = os.path.join(res, 'base_library.zip')\n"
+                  "for p in [zip_path, fw, res, exec_dir]:\n"
                   "    if os.path.exists(p) and p not in sys.path:\n"
                   "        sys.path.insert(0, p)\n"
                   "try:\n"
