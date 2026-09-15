@@ -179,6 +179,7 @@ jobs:
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
+            --hidden-import=gettext \
             --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
             --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
@@ -459,14 +460,14 @@ jobs:
               }
 
               const char *script =
-                  "import sys, os, builtins, gettext\n"
-                  "try:\n"
-                  "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
-                  "except Exception:\n"
-                  "    builtins._ = lambda msg: msg\n"
-                  "from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "GtkUI().start()\n";
-
+                "import sys, os, builtins\n"
+                "try:\n"
+                "    import gettext\n"
+                "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
+                "except Exception:\n"
+                "    builtins._ = lambda msg: msg\n"
+                "from deluge.ui.gtk3.gtkui import GtkUI\n"
+                "GtkUI().start()\n";
               int result = PyRun_SimpleString(script);
               Py_Finalize();
               return result;
