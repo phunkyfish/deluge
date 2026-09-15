@@ -185,6 +185,7 @@ jobs:
             --hidden-import=logging \
             --hidden-import=logging.config \
             --hidden-import=logging.handlers \
+            --hidden-import=asyncio \
             --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
             --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
