@@ -223,8 +223,11 @@ jobs:
           rsync -av --exclude="lib-dynload" \
                     --exclude="site-packages" \
                     --exclude="__pycache__" \
+                    --exclude="config-*" \
                     --exclude="*.so" \
                     --exclude="*.dylib" \
+                    --exclude="*.a" \
+                    --exclude="*.o" \
                     "$STDLIB_PATH/" "$TARGET_DIR/"
 
       - name: Export PyInstaller Raw Bootloader Template
