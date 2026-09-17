@@ -429,25 +429,30 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
+              // Resolve paths relative to MacOS directory
               char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX];
+              snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
+              snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
               snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
-
-              char canonical_res[PATH_MAX];
-              if (!realpath(res_dir, canonical_res)) {
-                  fprintf(stderr, "Error: Could not resolve Resources path at %s\n", res_dir);
-                  return 1;
-              }
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
 
-              // Override default CPython sys.path generation
+              // Explicitly set module search paths
               config.module_search_paths_set = 1;
 
-              // Set home to Resources so PyInstaller's base_library.zip is auto-detected
-              wchar_t *w_home = Py_DecodeLocale(canonical_res, NULL);
-              PyConfig_SetString(&config, &config.home, w_home);
-              PyMem_RawFree(w_home);
+              wchar_t *w_zip = Py_DecodeLocale(zip_path, NULL);
+              wchar_t *w_fw  = Py_DecodeLocale(fw_dir, NULL);
+              wchar_t *w_res = Py_DecodeLocale(res_dir, NULL);
+
+              // Must append base_library.zip FIRST so CPython can load codecs on boot
+              PyWideStringList_Append(&config.module_search_paths, w_zip);
+              PyWideStringList_Append(&config.module_search_paths, w_fw);
+              PyWideStringList_Append(&config.module_search_paths, w_res);
+
+              PyMem_RawFree(w_zip);
+              PyMem_RawFree(w_fw);
+              PyMem_RawFree(w_res);
 
               PyStatus status = Py_InitializeFromConfig(&config);
               PyConfig_Clear(&config);
@@ -460,16 +465,16 @@ jobs:
               }
 
               const char *script =
-                "import sys, os, builtins\n"
-                "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
-                "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
-                "res = os.path.join(bundle, 'Resources')\n"
-                "fw = os.path.join(bundle, 'Frameworks')\n"
-                "zip_path = os.path.join(res, 'base_library.zip')\n"
-                "for p in [zip_path, fw, res, exec_dir]:\n"
-                "    if os.path.exists(p) and p not in sys.path:\n"
-                "        sys.path.insert(0, p)\n"
-                "import run_deluge\n"; // Executes PyInstaller's full entry setup
+                  "import sys, os, builtins\n"
+                  "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+                  "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
+                  "res = os.path.join(bundle, 'Resources')\n"
+                  "fw = os.path.join(bundle, 'Frameworks')\n"
+                  "zip_path = os.path.join(res, 'base_library.zip')\n"
+                  "for p in [zip_path, fw, res, exec_dir]:\n"
+                  "    if os.path.exists(p) and p not in sys.path:\n"
+                  "        sys.path.insert(0, p)\n"
+                  "import run_deluge\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
