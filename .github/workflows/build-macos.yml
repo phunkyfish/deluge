@@ -180,10 +180,14 @@ jobs:
             --collect-submodules=logging \
             --hidden-import=_struct \
             --hidden-import=struct \
-            --hidden-import=_json \
-            --hidden-import=json \
+            --hidden-import=_sqlite3 \
+            --hidden-import=sqlite3 \
             --hidden-import=_hashlib \
             --hidden-import=_ssl \
+            --hidden-import=_json \
+            --hidden-import=json \
+            --hidden-import=_asyncio \
+            --hidden-import=asyncio \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
@@ -191,7 +195,6 @@ jobs:
             --hidden-import=logging \
             --hidden-import=logging.config \
             --hidden-import=logging.handlers \
-            --hidden-import=asyncio \
             --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
             --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
@@ -236,12 +239,6 @@ jobs:
                     --exclude="*.a" \
                     --exclude="*.o" \
                     "$STDLIB_PATH/" "$TARGET_DIR/"
-
-          echo "Copying stdlib C-extensions (lib-dynload) to Frameworks..."
-          # 2. Copy compiled C-extensions into Frameworks so lipo stitches them safely in Job 3
-          if [ -d "$STDLIB_PATH/lib-dynload" ]; then
-            cp -R "$STDLIB_PATH/lib-dynload/"*.so "$FW_DIR/"
-          fi
 
       - name: Export PyInstaller Raw Bootloader Template
         run: |
