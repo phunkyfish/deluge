@@ -188,7 +188,7 @@ jobs:
             run_deluge.py
 
           # Patch Deluge.spec to include logging, asyncio, gettext, xml inside Analysis.datas
-          python3 -c "
+          python3.11 -c "
           import sysconfig, os
 
           spec_path = 'Deluge.spec'
