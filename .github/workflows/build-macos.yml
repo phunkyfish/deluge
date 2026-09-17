@@ -187,25 +187,37 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Append Option B directly to the end of Deluge.spec
+          # 2. Append Python module graph injection directly into Deluge.spec
           cat << 'EOF' >> Deluge.spec
 
-          # --- Custom Injection for Dropped Pure-Python Stdlib Packages ---
+          # --- Inject Dropped Pure-Python Stdlib Modules into PyInstaller's Module Graph ---
           import sysconfig, os
+          from PyInstaller.building.build_main import Module
 
           stdlib_path = sysconfig.get_path("stdlib")
-          missing_stdlib = ['logging', 'gettext.py', 'asyncio', 'xml']
+          missing_modules = ['logging', 'asyncio', 'gettext', 'xml']
 
-          extra_datas = []
-          for item in missing_stdlib:
-              full_path = os.path.join(stdlib_path, item)
-              if os.path.isdir(full_path):
-                  extra_datas.append((full_path, item))
-              elif os.path.exists(full_path):
-                  extra_datas.append((full_path, '.'))
+          extra_pure = []
+          for mod_name in missing_modules:
+              mod_path = os.path.join(stdlib_path, mod_name)
+              if os.path.isdir(mod_path):
+                  # Package directory (e.g. logging/__init__.py)
+                  init_file = os.path.join(mod_path, '__init__.py')
+                  if os.path.exists(init_file):
+                      extra_pure.append((mod_name, init_file, 'PYMODULE'))
+                      for root, _, files in os.walk(mod_path):
+                          for f in files:
+                              if f.endswith('.py') and f != '__init__.py':
+                                  full_p = os.path.join(root, f)
+                                  rel_p = os.path.relpath(full_p, stdlib_path)
+                                  py_mod = rel_p[:-3].replace(os.sep, '.')
+                                  extra_pure.append((py_mod, full_p, 'PYMODULE'))
+              elif os.path.exists(mod_path + '.py'):
+                  # Single module file (e.g. gettext.py)
+                  extra_pure.append((mod_name, mod_path + '.py', 'PYMODULE'))
 
-          # Inject into PyInstaller's Analysis data collector
-          a.datas += extra_datas
+          # Append directly to Analysis pure python module collection
+          a.pure += extra_pure
           EOF
 
           pyinstaller --clean Deluge.spec
