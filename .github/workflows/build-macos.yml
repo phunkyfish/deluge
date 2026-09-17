@@ -177,30 +177,36 @@ jobs:
             --collect-data=deluge \
             --collect-submodules=twisted \
             --collect-submodules=zope.interface \
-            --collect-submodules=logging \
-            --hidden-import=_struct \
-            --hidden-import=struct \
-            --hidden-import=_sqlite3 \
-            --hidden-import=sqlite3 \
-            --hidden-import=_hashlib \
-            --hidden-import=_ssl \
-            --hidden-import=_json \
-            --hidden-import=json \
-            --hidden-import=_asyncio \
-            --hidden-import=asyncio \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
-            --hidden-import=gettext \
-            --hidden-import=logging \
-            --hidden-import=logging.config \
-            --hidden-import=logging.handlers \
             --add-binary "$BREW_PREFIX/lib/libgtk-3.dylib:." \
             --add-binary "$BREW_PREFIX/lib/libgdk-3.dylib:." \
             --add-data "$SITE_PACKAGES/deluge/ui/data:deluge/ui/data" \
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
+
+          # 2. Append Option B directly to the end of Deluge.spec
+          cat << 'EOF' >> Deluge.spec
+
+          # --- Custom Injection for Dropped Pure-Python Stdlib Packages ---
+          import sysconfig, os
+
+          stdlib_path = sysconfig.get_path("stdlib")
+          missing_stdlib = ['logging', 'gettext.py', 'asyncio', 'xml']
+
+          extra_datas = []
+          for item in missing_stdlib:
+              full_path = os.path.join(stdlib_path, item)
+              if os.path.isdir(full_path):
+                  extra_datas.append((full_path, item))
+              elif os.path.exists(full_path):
+                  extra_datas.append((full_path, '.'))
+
+          # Inject into PyInstaller's Analysis data collector
+          a.datas += extra_datas
+          EOF
 
           pyinstaller --clean Deluge.spec
 
@@ -221,24 +227,6 @@ jobs:
 
           # Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
-
-      - name: Bundle Pure-Python Standard Library
-        run: |
-          STDLIB_PATH=$(python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
-          TARGET_DIR="dist/Deluge.app/Contents/Resources"
-          FW_DIR="dist/Deluge.app/Contents/Frameworks"
-          echo "Copying pure Python stdlib modules from $STDLIB_PATH to $TARGET_DIR..."
-
-          # Copy all top-level .py files and standard package directories (excluding C-extensions / lib-dynload)
-          rsync -av --exclude="lib-dynload" \
-                    --exclude="site-packages" \
-                    --exclude="__pycache__" \
-                    --exclude="config-*" \
-                    --exclude="*.so" \
-                    --exclude="*.dylib" \
-                    --exclude="*.a" \
-                    --exclude="*.o" \
-                    "$STDLIB_PATH/" "$TARGET_DIR/"
 
       - name: Export PyInstaller Raw Bootloader Template
         run: |
