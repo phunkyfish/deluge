@@ -204,17 +204,20 @@ jobs:
                           if not f.endswith('.pyc') and '__pycache__' not in root:
                               full_p = os.path.join(root, f)
                               rel_p = os.path.relpath(full_p, stdlib)
-                              extra_datas.append((os.path.dirname(rel_p), full_p))
+                              dest_dir = os.path.dirname(rel_p)
+                              # SRC: full_p (absolute file path)
+                              # DEST_DIR: dest_dir (relative bundle folder)
+                              extra_datas.append((full_p, dest_dir))
               elif os.path.exists(src):
-                  extra_datas.append(('.', src))
-
-          injection = f'datas += {extra_datas}\n'
+                  extra_datas.append((src, '.'))
 
           with open(spec_path, 'r') as f:
               content = f.read()
 
-          # Inject right after Analysis is instantiated
+          # Insert extra_datas definition right before Analysis()
+          injection = f'extra_datas = {extra_datas}\n'
           content = content.replace('a = Analysis(', injection + 'a = Analysis(')
+          content = content.replace('datas=datas,', 'datas=datas + extra_datas,')
 
           with open(spec_path, 'w') as f:
               f.write(content)
