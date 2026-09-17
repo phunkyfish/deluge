@@ -187,37 +187,23 @@ jobs:
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # 2. Append Python module graph injection directly into Deluge.spec
+          # 2. Append stdlib data collector to Deluge.spec
           cat << 'EOF' >> Deluge.spec
 
-          # --- Inject Dropped Pure-Python Stdlib Modules into PyInstaller's Module Graph ---
+          #  --- Explicit Pure-Python Stdlib Bundle ---
           import sysconfig, os
-          from PyInstaller.building.build_main import Module
 
           stdlib_path = sysconfig.get_path("stdlib")
-          missing_modules = ['logging', 'asyncio', 'gettext', 'xml']
+          missing_items = ['logging', 'asyncio', 'gettext.py', 'xml']
 
-          extra_pure = []
-          for mod_name in missing_modules:
-              mod_path = os.path.join(stdlib_path, mod_name)
-              if os.path.isdir(mod_path):
-                  # Package directory (e.g. logging/__init__.py)
-                  init_file = os.path.join(mod_path, '__init__.py')
-                  if os.path.exists(init_file):
-                      extra_pure.append((mod_name, init_file, 'PYMODULE'))
-                      for root, _, files in os.walk(mod_path):
-                          for f in files:
-                              if f.endswith('.py') and f != '__init__.py':
-                                  full_p = os.path.join(root, f)
-                                  rel_p = os.path.relpath(full_p, stdlib_path)
-                                  py_mod = rel_p[:-3].replace(os.sep, '.')
-                                  extra_pure.append((py_mod, full_p, 'PYMODULE'))
-              elif os.path.exists(mod_path + '.py'):
-                  # Single module file (e.g. gettext.py)
-                  extra_pure.append((mod_name, mod_path + '.py', 'PYMODULE'))
-
-          # Append directly to Analysis pure python module collection
-          a.pure += extra_pure
+          for item in missing_items:
+              src = os.path.join(stdlib_path, item)
+              if os.path.isdir(src):
+                  a.datas += [(os.path.join(item, root[len(src)+1:], file), os.path.join(root, file), 'DATA')
+                              for root, dirs, files in os.walk(src)
+                              for file in files if not file.endswith('.pyc')]
+              elif os.path.exists(src):
+                  a.datas.append((item, src, 'DATA'))
           EOF
 
           pyinstaller --clean Deluge.spec
