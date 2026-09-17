@@ -178,6 +178,12 @@ jobs:
             --collect-submodules=twisted \
             --collect-submodules=zope.interface \
             --collect-submodules=logging \
+            --hidden-import=_struct \
+            --hidden-import=struct \
+            --hidden-import=_json \
+            --hidden-import=json \
+            --hidden-import=_hashlib \
+            --hidden-import=_ssl \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --hidden-import=setuptools \
