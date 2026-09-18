@@ -198,30 +198,27 @@ jobs:
 
           # Patch Deluge.spec to include logging, asyncio, gettext, xml inside Analysis.datas
           python3.11 -c "
-          import sysconfig, os
+          import sysconfig, os, site
 
           spec_path = 'Deluge.spec'
           stdlib = sysconfig.get_path('stdlib')
+          site_pkgs = site.getsitepackages()[0]
           lib_dynload = os.path.join(stdlib, 'lib-dynload')
 
-          ignored_dirs = {'site-packages', '__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo'}
+          ignored_dirs = {'__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'pip', 'pkg_resources', 'wheel'}
           ignored_exts = ('.a', '.o', '.pyc')
 
           extra_datas = []
 
           # 1. Walk pure Python stdlib modules
           for root, dirs, files in os.walk(stdlib):
-              # Do not walk into site-packages or lib-dynload in this pass
-              dirs[:] = [d for d in dirs if d not in ignored_dirs and d != 'lib-dynload' and not d.startswith('config-')]
-
+              dirs[:] = [d for d in dirs if d not in ignored_dirs and d != 'site-packages' and d != 'lib-dynload' and not d.startswith('config-')]
               for f in files:
                   if f.endswith(ignored_exts) or f.endswith('.so') or f.endswith('.dylib'):
                       continue
-
                   full_p = os.path.join(root, f)
                   rel_p = os.path.relpath(full_p, stdlib)
                   dest_dir = os.path.dirname(rel_p)
-
                   extra_datas.append((full_p, dest_dir if dest_dir else '.'))
 
           # 2. Explicitly include stdlib C-extensions (_struct, _json, _ssl, etc.) from lib-dynload
@@ -229,8 +226,19 @@ jobs:
               for f in os.listdir(lib_dynload):
                   if f.endswith('.so'):
                       full_p = os.path.join(lib_dynload, f)
-                      # Place stdlib C-extensions at top-level Frameworks root where CPython expects them
                       extra_datas.append((full_p, '.'))
+
+          # 3. Walk site-packages (twisted, zope, deluge, etc.) to expose raw source to launcher.c
+          if os.path.exists(site_pkgs):
+              for root, dirs, files in os.walk(site_pkgs):
+                  dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith('.dist-info') and not d.endswith('.egg-info')]
+                  for f in files:
+                      if f.endswith(ignored_exts):
+                          continue
+                      full_p = os.path.join(root, f)
+                      rel_p = os.path.relpath(full_p, site_pkgs)
+                      dest_dir = os.path.dirname(rel_p)
+                      extra_datas.append((full_p, dest_dir if dest_dir else '.'))
 
           with open(spec_path, 'r') as f:
               content = f.read()
