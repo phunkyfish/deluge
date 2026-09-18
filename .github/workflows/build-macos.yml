@@ -586,6 +586,7 @@ jobs:
                   "except Exception:\n"
                   "    builtins._ = lambda msg: msg\n"
                   "\n"
+                  "import argparse\n"
                   "from deluge.ui.gtk3.gtkui import GtkUI\n"
                   "# Create a mock namespace with an empty torrents list\n"
                   "args = argparse.Namespace(torrents=[])\n"
