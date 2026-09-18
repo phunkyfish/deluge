@@ -39,6 +39,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install System Packaging Tools & Libtorrent
         env:
@@ -52,6 +53,13 @@ jobs:
       - name: Build and Package Thin App
         run: |
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
+
+          echo "Python version being used on runner XXX"
+          python --version
+
+          echo "Python Installer version being used on runner target XXX"
+          python -m pip show pyinstaller
+          python -c "import sys; print('PyInstaller will target:', sys.version)"
 
           # 1. Resolve application version
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -193,7 +201,13 @@ jobs:
 
           spec_path = 'Deluge.spec'
           stdlib = sysconfig.get_path('stdlib')
-          targets = ['logging', 'asyncio', 'gettext.py', 'xml']
+
+          # Expanded pure-Python stdlib targets to satisfy transitive imports
+          targets = [
+              'logging', 'asyncio', 'gettext.py', 'xml', 'importlib',
+              'tokenize.py', 'linecache.py', 'traceback.py', 're',
+              'string.py', 'typing.py', 'collections', 'urllib', 'http'
+          ]
 
           extra_datas = []
           for item in targets:
@@ -291,11 +305,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install PyInstaller and Spec Build Dependencies
         run: |
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
           python3 -m pip install "Cython<3.0" poetry-core pygobject pycairo
+
+          echo "Python version being used on runner XXX"
+          python --version
+
+          echo "Python Installer version being used on runner target XXX"
+          python -m pip show pyinstaller
+          python -c "import sys; print('PyInstaller will target:', sys.version)"
 
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
             APP_VERSION="${GITHUB_REF_NAME#deluge-}"
