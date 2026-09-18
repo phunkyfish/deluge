@@ -205,7 +205,7 @@ jobs:
           site_pkgs = site.getsitepackages()[0]
           lib_dynload = os.path.join(stdlib, 'lib-dynload')
 
-          ignored_dirs = {'__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'pip', 'pkg_resources', 'wheel'}
+          ignored_dirs = {'__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'pip', 'wheel'}
           ignored_exts = ('.a', '.o', '.pyc')
 
           extra_datas = []
@@ -228,7 +228,7 @@ jobs:
                       full_p = os.path.join(lib_dynload, f)
                       extra_datas.append((full_p, '.'))
 
-          # 3. Walk site-packages (twisted, zope, deluge, etc.) to expose raw source to launcher.c
+          # 3. Walk site-packages (twisted, zope, deluge, pkg_resources, setuptools, etc.)
           if os.path.exists(site_pkgs):
               for root, dirs, files in os.walk(site_pkgs):
                   dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith('.dist-info') and not d.endswith('.egg-info')]
