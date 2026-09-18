@@ -202,10 +202,10 @@ jobs:
 
           spec_path = 'Deluge.spec'
           stdlib = sysconfig.get_path('stdlib')
+          lib_dynload = os.path.join(stdlib, 'lib-dynload')
 
-          # Exclude directories/files that contain C-extensions, site packages, or build configs
-          ignored_dirs = {'lib-dynload', 'site-packages', '__pycache__', 'test', 'tests', 'idlelib', 'tkinter'}
-          ignored_exts = ('.so', '.dylib', '.a', '.o', '.pyc')
+          ignored_dirs = {'site-packages', '__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo'}
+          ignored_exts = ('.a', '.o', '.pyc')
 
           extra_datas = []
 
