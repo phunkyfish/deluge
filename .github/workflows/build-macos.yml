@@ -144,6 +144,7 @@ jobs:
 
           # 5. Synthesize bootstrapper entrypoint
           cat <<'EOF' > run_deluge.py
+          import sys
           import builtins
           import gettext
 
@@ -159,7 +160,9 @@ jobs:
           from deluge.ui.gtk3.gtkui import GtkUI
 
           def start():
-              ui = GtkUI()
+              # Pass sys.argv arguments to GtkUI
+              args = sys.argv[1:] if len(sys.argv) > 1 else []
+              ui = GtkUI(args)
               ui.start()
 
           if __name__ == '__main__':
@@ -549,7 +552,8 @@ jobs:
                   "    builtins._ = lambda msg: msg\n"
                   "\n"
                   "from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "GtkUI().start()\n";
+                  "args = sys.argv[1:] if len(sys.argv) > 1 else []\n"
+                  "GtkUI(args).start()\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
