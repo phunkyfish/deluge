@@ -56,10 +56,11 @@ jobs:
 
           echo "Python version being used on runner XXX"
           python --version
+          python3 --version
 
           echo "Python Installer version being used on runner target XXX"
           python -m pip show pyinstaller
-          python -c "import sys; print('PyInstaller will target:', sys.version)"
+          python -u -c "import sys; print('PyInstaller will target:', sys.version)"
 
           # 1. Resolve application version
           if [[ "${{ github.ref }}" == refs/tags/deluge-* ]]; then
@@ -202,28 +203,26 @@ jobs:
           spec_path = 'Deluge.spec'
           stdlib = sysconfig.get_path('stdlib')
 
-          # Expanded pure-Python stdlib targets to satisfy transitive imports
-          targets = [
-              'logging', 'asyncio', 'gettext.py', 'xml', 'importlib',
-              'tokenize.py', 'linecache.py', 'traceback.py', 're',
-              'string.py', 'typing.py', 'collections', 'urllib', 'http'
-          ]
+          # Exclude directories/files that contain C-extensions, site packages, or build configs
+          ignored_dirs = {'lib-dynload', 'site-packages', '__pycache__', 'test', 'tests', 'idlelib', 'tkinter'}
+          ignored_exts = ('.so', '.dylib', '.a', '.o', '.pyc')
 
           extra_datas = []
-          for item in targets:
-              src = os.path.join(stdlib, item)
-              if os.path.isdir(src):
-                  for root, _, files in os.walk(src):
-                      for f in files:
-                          if not f.endswith('.pyc') and '__pycache__' not in root:
-                              full_p = os.path.join(root, f)
-                              rel_p = os.path.relpath(full_p, stdlib)
-                              dest_dir = os.path.dirname(rel_p)
-                              # SRC: full_p (absolute file path)
-                              # DEST_DIR: dest_dir (relative bundle folder)
-                              extra_datas.append((full_p, dest_dir))
-              elif os.path.exists(src):
-                  extra_datas.append((src, '.'))
+
+          for root, dirs, files in os.walk(stdlib):
+              # Prune ignored directories in place to avoid walking into them
+              dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith('config-')]
+
+              for f in files:
+                  if f.endswith(ignored_exts):
+                      continue
+
+                  full_p = os.path.join(root, f)
+                  rel_p = os.path.relpath(full_p, stdlib)
+                  dest_dir = os.path.dirname(rel_p)
+
+                  # Format as (absolute_source_file, relative_bundle_folder)
+                  extra_datas.append((full_p, dest_dir if dest_dir else '.'))
 
           with open(spec_path, 'r') as f:
               content = f.read()
@@ -314,6 +313,7 @@ jobs:
 
           echo "Python version being used on runner XXX"
           python --version
+          python3 --version
 
           echo "Python Installer version being used on runner target XXX"
           python -m pip show pyinstaller
