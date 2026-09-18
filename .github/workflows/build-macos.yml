@@ -134,12 +134,22 @@ jobs:
                           try: ctypes.CDLL(os.path.join(search_path, dylib))
                           except Exception: pass
 
+          pixbuf_cache = os.path.join(resources_dir, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')
+          pixbuf_loader_dir = os.path.join(resources_dir, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders')
+
+          if os.path.exists(pixbuf_cache):
+              os.environ['GDK_PIXBUF_MODULE_FILE'] = pixbuf_cache
+              os.environ['GDK_PIXBUF_MODULEDIR'] = pixbuf_loader_dir
+
           path_str = ":".join(search_paths)
           os.environ['DYLD_FALLBACK_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '')}"
           os.environ['DYLD_LIBRARY_PATH'] = f"{path_str}:{os.environ.get('DYLD_LIBRARY_PATH', '')}"
           os.environ['GI_TYPELIB_PATH'] = f"{resources_dir}/gi_typelibs:{os.environ.get('GI_TYPELIB_PATH', '')}"
           os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(resources_dir, 'glib-2.0', 'schemas')
           os.environ['XDG_DATA_DIRS'] = f"{resources_dir}:{os.environ.get('XDG_DATA_DIRS', '/usr/local/share:/usr/share')}"
+
+          # Unset host Homebrew library paths during runtime initialization
+          os.environ['DYLD_LIBRARY_PATH'] = frameworks_dir
           EOF
 
           # 5. Synthesize bootstrapper entrypoint
@@ -158,10 +168,11 @@ jobs:
               builtins.__dict__['_'] = lambda msg: msg
 
           from deluge.ui.gtk3.gtkui import GtkUI
+          import argparse
 
           def start():
-              # Pass sys.argv arguments to GtkUI
-              args = sys.argv[1:] if len(sys.argv) > 1 else []
+              # Create a mock namespace with an empty torrents list
+              args = argparse.Namespace(torrents=[])
               ui = GtkUI(args)
               ui.start()
 
@@ -265,6 +276,16 @@ jobs:
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
           [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+
+          # Copy gdk-pixbuf loaders and compile loaders.cache
+          PIXBUF_MODULE_DIR="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+          mkdir -p "$PIXBUF_MODULE_DIR"
+
+          cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$PIXBUF_MODULE_DIR/" 2>/dev/null || true
+          gdk-pixbuf-query-loaders "$PIXBUF_MODULE_DIR"/*.so > "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+
+          # Fix absolute paths in loaders.cache to use relative structure inside the bundle
+          sed -i '' "s|/.*lib/gdk-pixbuf-2.0/2.10.0/loaders/||g" "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
 
           # STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
@@ -506,6 +527,10 @@ jobs:
               snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
               snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
 
+              // ISSUE 3 FIX: Isolate dynamic library loading to App Bundle first (prevents Homebrew duplication)
+              setenv("DYLD_LIBRARY_PATH", fw_dir, 1);
+              setenv("DYLD_FALLBACK_LIBRARY_PATH", fw_dir, 1);
+
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
 
@@ -545,6 +570,16 @@ jobs:
                   "for p in [zip_path, fw, res, exec_dir]:\n"
                   "    if os.path.exists(p) and p not in sys.path:\n"
                   "        sys.path.insert(0, p)\n"
+                  "# ISSUE 2 FIX: Configure GdkPixbuf and GTK environment paths\n"
+                  "pixbuf_cache = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')\n"
+                  "pixbuf_loader_dir = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders')\n"
+                  "if os.path.exists(pixbuf_cache):\n"
+                  "    os.environ['GDK_PIXBUF_MODULE_FILE'] = pixbuf_cache\n"
+                  "    os.environ['GDK_PIXBUF_MODULEDIR'] = pixbuf_loader_dir\n"
+                  "os.environ['GI_TYPELIB_PATH'] = os.path.join(res, 'gi_typelibs')\n"
+                  "os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(res, 'share', 'glib-2.0', 'schemas')\n"
+                  "os.environ['XDG_DATA_DIRS'] = res\n"
+                  "\n"
                   "try:\n"
                   "    import gettext\n"
                   "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
@@ -552,7 +587,8 @@ jobs:
                   "    builtins._ = lambda msg: msg\n"
                   "\n"
                   "from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "args = sys.argv[1:] if len(sys.argv) > 1 else []\n"
+                  "# Create a mock namespace with an empty torrents list\n"
+                  "args = argparse.Namespace(torrents=[])\n"
                   "GtkUI(args).start()\n";
 
               int result = PyRun_SimpleString(script);
