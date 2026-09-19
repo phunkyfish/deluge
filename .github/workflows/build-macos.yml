@@ -269,23 +269,46 @@ jobs:
           pyinstaller --clean Deluge.spec
 
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
-          mkdir -p "$APP_RESOURCES/girepository-1.0" "$APP_RESOURCES/share/glib-2.0/schemas" "$APP_RESOURCES/share/icons"
+          APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
+
+          mkdir -p "$APP_RESOURCES/girepository-1.0" \
+                   "$APP_RESOURCES/share/glib-2.0/schemas" \
+                   "$APP_RESOURCES/share/icons" \
+                   "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0"
 
           cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          [ -d "$BREW_PREFIX/share/icons/hicolor" ] && cp -R "$BREW_PREFIX/share/icons/hicolor" "$APP_RESOURCES/share/icons/"
+          # 1. Copy hicolor icon theme to Resources/share/icons
+          if [ -d "$BREW_PREFIX/share/icons" ]; then
+            mkdir -p "$APP_RESOURCES/share/icons"
+            cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
+          fi
 
-          # Copy gdk-pixbuf loaders and compile loaders.cache
-          PIXBUF_MODULE_DIR="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders"
-          mkdir -p "$PIXBUF_MODULE_DIR"
+          # 2. Copy pixbuf loaders directly into Frameworks (so dyld locates them naturally)
+          cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$PIXBUF_MODULE_DIR/" 2>/dev/null || true
-          gdk-pixbuf-query-loaders "$PIXBUF_MODULE_DIR"/*.so > "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          # 3. Generate loaders.cache pointing explicitly to @executable_path/../Frameworks/
+          LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          gdk-pixbuf-query-loaders "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so > "$LOADERS_CACHE"
 
-          # Fix absolute paths in loaders.cache to use relative structure inside the bundle
-          sed -i '' "s|/.*lib/gdk-pixbuf-2.0/2.10.0/loaders/||g" "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          # Replace local Homebrew paths with @executable_path relative references for Hardened Runtime
+          sed -i '' -E 's|"[^"]*/([^/]+\.so)"|r"@executable_path/../Frameworks/\1"|g' "$LOADERS_CACHE"
+          sed -i '' -E 's|@executable_path/../Frameworks/|@executable_path/../Frameworks/|g' "$LOADERS_CACHE"
+          # Simple clean path replace:
+          python3 -c "
+          cache_p = '$LOADERS_CACHE'
+          with open(cache_p, 'r') as f:
+              lines = f.readlines()
+          with open(cache_p, 'w') as f:
+              for line in lines:
+                  if line.startswith('\"'):
+                      so_name = line.split('/')[-1].replace('\"', '').strip()
+                      f.write(f'\"@executable_path/../Frameworks/{so_name}\"\n')
+                  else:
+                      f.write(line)
+          "
 
           # STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
@@ -591,6 +614,46 @@ jobs:
                   "# Create a mock namespace with an empty torrents list\n"
                   "args = argparse.Namespace(torrents=[])\n"
                   "GtkUI(args).start()\n";
+
+                  const char *script =
+                      "import sys, os, builtins, warnings\n"
+                      "# Suppress deprecation warnings for clean output\n"
+                      "warnings.filterwarnings('ignore', category=UserWarning, module='pkg_resources')\n"
+                      "warnings.filterwarnings('ignore', category=DeprecationWarning)\n"
+                      "\n"
+                      "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
+                      "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
+                      "res = os.path.join(bundle, 'Resources')\n"
+                      "fw = os.path.join(bundle, 'Frameworks')\n"
+                      "zip_path = os.path.join(res, 'base_library.zip')\n"
+                      "\n"
+                      "# Path insertion\n"
+                      "for p in [zip_path, fw, res, exec_dir]:\n"
+                      "    if os.path.exists(p) and p not in sys.path:\n"
+                      "        sys.path.insert(0, p)\n"
+                      "\n"
+                      "# Configure GTK, GdkPixbuf, and Icon Environment\n"
+                      "pixbuf_cache = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')\n"
+                      "if os.path.exists(pixbuf_cache):\n"
+                      "    os.environ['GDK_PIXBUF_MODULE_FILE'] = pixbuf_cache\n"
+                      "    os.environ['GDK_PIXBUF_MODULEDIR'] = fw\n"
+                      "\n"
+                      "os.environ['GI_TYPELIB_PATH'] = os.path.join(res, 'gi_typelibs')\n"
+                      "os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(res, 'share', 'glib-2.0', 'schemas')\n"
+                      "os.environ['XDG_DATA_DIRS'] = f\"{os.path.join(res, 'share')}:{res}\"\n"
+                      "\n"
+                      "# Localization bootstrap\n"
+                      "try:\n"
+                      "    import gettext\n"
+                      "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
+                      "except Exception:\n"
+                      "    builtins._ = lambda msg: msg\n"
+                      "\n"
+                      "# Instantiate Deluge GtkUI\n"
+                      "import argparse\n"
+                      "from deluge.ui.gtk3.gtkui import GtkUI\n"
+                      "args = argparse.Namespace(torrents=[])\n"
+                      "GtkUI(args).start()\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
