@@ -280,23 +280,32 @@ jobs:
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # 1. Copy full icon themes (hicolor & Adwaita if present)
+          # 1. Copy icon themes
           if [ -d "$BREW_PREFIX/share/icons" ]; then
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # 2. Copy librsvg and all pixbuf loader .so modules into Frameworks
-          cp -fv "$BREW_PREFIX"/lib/libpixbufloader*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
+          # 2. Copy SVG loader modules and librsvg
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 3. Generate loaders.cache against Frameworks binaries
+          # 3. Build loaders.cache using absolute paths first, then rewrite paths to relative @executable_path
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so "$APP_FRAMEWORKS"/gdk-pixbuf-2.0/2.10.0/loaders/*.so > "$LOADERS_CACHE" 2>/dev/null || \
           gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
 
-          # Clean absolute paths to @executable_path relative targets
-          sed -i '' "s|/.*Frameworks/|@executable_path/../Frameworks/|g" "$LOADERS_CACHE"
+          # Fix paths inside cache file safely
+          python3 -c "
+          cache_p = '$LOADERS_CACHE'
+          with open(cache_p, 'r') as f:
+              lines = f.readlines()
+          with open(cache_p, 'w') as f:
+              for line in lines:
+                  if line.startswith('\"'):
+                      so_name = line.split('/')[-1].rstrip()
+                      f.write(f'\"@executable_path/../Frameworks/{so_name}\n')
+                  else:
+                      f.write(line)
+          "
 
           # STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
@@ -532,19 +541,28 @@ jobs:
               if (!realpath(path, resolved_path)) return 1;
               char *exec_dir = dirname(resolved_path);
 
-              // Resolve paths relative to MacOS directory
-              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX];
+              // Resolve directories relative to MacOS/
+              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], cache_path[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX], share_dir[PATH_MAX];
               snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
               snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
               snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
+              snprintf(cache_path, sizeof(cache_path), "%s/../Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache", exec_dir);
+              snprintf(schema_dir, sizeof(schema_dir), "%s/../Resources/share/glib-2.0/schemas", exec_dir);
+              snprintf(typelib_dir, sizeof(typelib_dir), "%s/../Resources/girepository-1.0", exec_dir);
+              snprintf(share_dir, sizeof(share_dir), "%s/../Resources/share", exec_dir);
 
-              // Clear out host/Homebrew paths completely to prevent duplicate GIO/GLib symbol collisions
+              // Completely strip host Homebrew fallback paths to prevent dual GIO loading
               unsetenv("DYLD_FALLBACK_LIBRARY_PATH");
               unsetenv("DYLD_FALLBACK_FRAMEWORK_PATH");
-
-              // Force dyld to ONLY search the bundle's Frameworks directory first
               setenv("DYLD_LIBRARY_PATH", fw_dir, 1);
               setenv("DYLD_FRAMEWORK_PATH", fw_dir, 1);
+
+              // GTK / GdkPixbuf / GI variables must be set at C level before Python bindings start loading shared libs
+              setenv("GDK_PIXBUF_MODULE_FILE", cache_path, 1);
+              setenv("GDK_PIXBUF_MODULEDIR", fw_dir, 1);
+              setenv("GI_TYPELIB_PATH", typelib_dir, 1);
+              setenv("GSETTINGS_SCHEMA_DIR", schema_dir, 1);
+              setenv("XDG_DATA_DIRS", share_dir, 1);
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
@@ -592,17 +610,6 @@ jobs:
                   "    if os.path.exists(p) and p not in sys.path:\n"
                   "        sys.path.insert(0, p)\n"
                   "\n"
-                  "# Configure GTK, GdkPixbuf, and Icon Environment\n"
-                  "pixbuf_cache = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')\n"
-                  "if os.path.exists(pixbuf_cache):\n"
-                  "    os.environ['GDK_PIXBUF_MODULE_FILE'] = pixbuf_cache\n"
-                  "    os.environ['GDK_PIXBUF_MODULEDIR'] = fw\n"
-                  "\n"
-                  "os.environ['GI_TYPELIB_PATH'] = os.path.join(res, 'girepository-1.0')\n"
-                  "os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(res, 'share', 'glib-2.0', 'schemas')\n"
-                  "os.environ['XDG_DATA_DIRS'] = f\"{os.path.join(res, 'share')}:{res}\"\n"
-                  "\n"
-                  "# Localization bootstrap\n"
                   "try:\n"
                   "    import gettext\n"
                   "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
