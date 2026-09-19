@@ -270,6 +270,7 @@ jobs:
 
       - name: Stage Assets and Bundle Dynamic Libraries
         run: |
+          BREW_PREFIX="$(brew --prefix)"
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
 
@@ -278,10 +279,13 @@ jobs:
                    "$APP_RESOURCES/share/icons" \
                    "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0"
 
-          # 1. Copy schemas, typelibs, and icons
+          # 1. Copy schemas, typelibs, and icons safely with fallback protection
           cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
-          glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
+
+          if [ -d "$BREW_PREFIX/share/glib-2.0/schemas" ]; then
+            cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/" 2>/dev/null || true
+            glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
+          fi
 
           if [ -d "$BREW_PREFIX/share/icons" ]; then
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
