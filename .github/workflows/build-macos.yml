@@ -289,20 +289,26 @@ jobs:
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 3. Build loaders.cache using absolute paths first, then rewrite paths to relative @executable_path
+          # 3. Build loaders.cache against Frameworks binaries
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
           gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
 
-          # Fix paths inside cache file safely
+          # Fix paths inside loaders.cache without messing up syntax or internal quotes
           python3 -c "
+          import os
+
           cache_p = '$LOADERS_CACHE'
           with open(cache_p, 'r') as f:
               lines = f.readlines()
+
           with open(cache_p, 'w') as f:
               for line in lines:
                   if line.startswith('\"'):
-                      so_name = line.split('/')[-1].rstrip()
-                      f.write(f'\"@executable_path/../Frameworks/{so_name}\n')
+                      # Extract full path inside outer quotes
+                      path = line.split('\"')[1]
+                      filename = os.path.basename(path)
+                      rest_of_line = line[len(path) + 2:]
+                      f.write(f'\"@executable_path/../Frameworks/{filename}\"{rest_of_line}')
                   else:
                       f.write(line)
           "
