@@ -276,29 +276,35 @@ jobs:
                    "$APP_RESOURCES/share/icons" \
                    "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0"
 
-          # Copy GObject typelibs & GLib schemas
+          # 1. Copy GObject typelibs & GLib schemas
           cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # Copy icons including hicolor theme
+          # 2. Copy icon themes (hicolor & Adwaita)
           if [ -d "$BREW_PREFIX/share/icons" ]; then
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # Copy ALL pixbuf loaders AND librsvg shared libraries into Frameworks
+          # 3. Copy SVG loader modules and ALL required librsvg/cairo/pango shared libraries
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX"/lib/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX"/lib/libharfbuzz*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # Point loader module dependent paths back to @executable_path/../Frameworks
+          # 4. Rewrite loader LC_LOAD_DYLIB install names to use @executable_path relative paths
           for loader in "$APP_FRAMEWORKS"/libpixbufloader*.so; do
             if [ -f "$loader" ]; then
               install_name_tool -id "@executable_path/../Frameworks/$(basename "$loader")" "$loader" 2>/dev/null || true
+              # Direct librsvg dependencies to the bundle Frameworks dir
+              otool -L "$loader" | awk '{print $1}' | grep -E 'librsvg|libcairo|libpango|libglib' | while read -r dep; do
+                install_name_tool -change "$dep" "@executable_path/../Frameworks/$(basename "$dep")" "$loader" 2>/dev/null || true
+              done
             fi
           done
 
-          # Regenerate loaders.cache
+          # 5. Generate loaders.cache against the modified binaries in Frameworks
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
           gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so > "$LOADERS_CACHE"
 
@@ -554,30 +560,29 @@ jobs:
               char *exec_dir = dirname(resolved_path);
 
               // Resolve directories relative to MacOS/
-              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], cache_path[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX], share_dir[PATH_MAX];
+              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], cache_path[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX];
               snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
               snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
               snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
               snprintf(cache_path, sizeof(cache_path), "%s/../Resources/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache", exec_dir);
               snprintf(schema_dir, sizeof(schema_dir), "%s/../Resources/share/glib-2.0/schemas", exec_dir);
               snprintf(typelib_dir, sizeof(typelib_dir), "%s/../Resources/girepository-1.0", exec_dir);
-              snprintf(share_dir, sizeof(share_dir), "%s/../Resources/share", exec_dir);
 
-              // Completely strip host Homebrew fallback paths to prevent dual GIO loading
+              // Completely strip host Homebrew fallback paths
               unsetenv("DYLD_FALLBACK_LIBRARY_PATH");
               unsetenv("DYLD_FALLBACK_FRAMEWORK_PATH");
               setenv("DYLD_LIBRARY_PATH", fw_dir, 1);
               setenv("DYLD_FRAMEWORK_PATH", fw_dir, 1);
 
-              // GTK / GdkPixbuf / GI variables set at C level
+              // GTK / GdkPixbuf / GI / XDG variables
               setenv("GDK_PIXBUF_MODULE_FILE", cache_path, 1);
               setenv("GDK_PIXBUF_MODULEDIR", fw_dir, 1);
               setenv("GI_TYPELIB_PATH", typelib_dir, 1);
               setenv("GSETTINGS_SCHEMA_DIR", schema_dir, 1);
 
-              // Ensure both Resources and Resources/share are included in XDG_DATA_DIRS
-              char xdg_dirs[PATH_MAX * 2];
-              snprintf(xdg_dirs, sizeof(xdg_dirs), "%s:%s/share", res_dir, res_dir);
+              // Include both Resources/share and Deluge UI assets in XDG_DATA_DIRS
+              char xdg_dirs[PATH_MAX * 3];
+              snprintf(xdg_dirs, sizeof(xdg_dirs), "%s/share:%s:%s/deluge/ui/data", res_dir, res_dir, fw_dir);
               setenv("XDG_DATA_DIRS", xdg_dirs, 1);
 
               PyConfig config;
