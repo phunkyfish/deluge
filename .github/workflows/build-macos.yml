@@ -192,6 +192,9 @@ jobs:
             --exclude-module=PIL \
             --exclude-module=Pillow \
             --exclude-module=tkinter \
+            --exclude-module=_tkinter \
+            --exclude-module=tcl \
+            --exclude-module=tk \
             --exclude-module=twisted.trial \
             --collect-all=deluge \
             --collect-binaries=gi \
@@ -830,6 +833,13 @@ jobs:
               '</dict>' \
               '</plist>' > "$FRAMEWORK_DIR/Resources/Info.plist"
           fi
+
+          echo "=== 1b. Removing Stale Signatures from Standalone Binaries ==="
+          find "$FINAL_APP/Contents" -type f ! -type l | while read -r file; do
+            if file -b "$file" | grep -q "Mach-O"; then
+              codesign --remove-signature "$file" 2>/dev/null || true
+            fi
+          done
 
           echo "=== 2. Signing Dynamic Libraries and C-Extensions ==="
           FILES_TO_SIGN=$(mktemp)
