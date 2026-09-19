@@ -367,12 +367,6 @@ jobs:
                       f.write(line)
           "
 
-          # STRIP BINARIES
-          echo "=== Stripping Debug Symbols ==="
-          find dist/Deluge.app -type f \( -name "*.dylib" -o -name "*.so" -o -name "Deluge" \) | while read -r bin; do
-            strip -x "$bin" 2>/dev/null || true
-          done
-
           # Clean unnecessary pyinstaller bloat inside app bundle
           find dist/Deluge.app -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -exec rm -rf {} + 2>/dev/null || true
 
