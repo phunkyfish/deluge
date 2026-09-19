@@ -280,20 +280,22 @@ jobs:
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # 1. Copy hicolor icon theme to Resources/share/icons
+          # 1. Copy full icon themes (hicolor & Adwaita if present)
           if [ -d "$BREW_PREFIX/share/icons" ]; then
-            mkdir -p "$APP_RESOURCES/share/icons"
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # 2. Copy pixbuf loaders into Frameworks
+          # 2. Copy librsvg and all pixbuf loader .so modules into Frameworks
+          cp -fv "$BREW_PREFIX"/lib/libpixbufloader*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 3. Generate loaders.cache and update paths safely
+          # 3. Generate loaders.cache against Frameworks binaries
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so "$APP_FRAMEWORKS"/gdk-pixbuf-2.0/2.10.0/loaders/*.so > "$LOADERS_CACHE" 2>/dev/null || \
           gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
 
-          # Replace absolute host paths with @executable_path relative paths
+          # Clean absolute paths to @executable_path relative targets
           sed -i '' "s|/.*Frameworks/|@executable_path/../Frameworks/|g" "$LOADERS_CACHE"
 
           # STRIP BINARIES
@@ -536,9 +538,13 @@ jobs:
               snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
               snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
 
-              // ISSUE 3 FIX: Isolate dynamic library loading to App Bundle first (prevents Homebrew duplication)
+              // Clear out host/Homebrew paths completely to prevent duplicate GIO/GLib symbol collisions
+              unsetenv("DYLD_FALLBACK_LIBRARY_PATH");
+              unsetenv("DYLD_FALLBACK_FRAMEWORK_PATH");
+
+              // Force dyld to ONLY search the bundle's Frameworks directory first
               setenv("DYLD_LIBRARY_PATH", fw_dir, 1);
-              setenv("DYLD_FALLBACK_LIBRARY_PATH", fw_dir, 1);
+              setenv("DYLD_FRAMEWORK_PATH", fw_dir, 1);
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
@@ -592,7 +598,7 @@ jobs:
                   "    os.environ['GDK_PIXBUF_MODULE_FILE'] = pixbuf_cache\n"
                   "    os.environ['GDK_PIXBUF_MODULEDIR'] = fw\n"
                   "\n"
-                  "os.environ['GI_TYPELIB_PATH'] = os.path.join(res, 'gi_typelibs')\n"
+                  "os.environ['GI_TYPELIB_PATH'] = os.path.join(res, 'girepository-1.0')\n"
                   "os.environ['GSETTINGS_SCHEMA_DIR'] = os.path.join(res, 'share', 'glib-2.0', 'schemas')\n"
                   "os.environ['XDG_DATA_DIRS'] = f\"{os.path.join(res, 'share')}:{res}\"\n"
                   "\n"
