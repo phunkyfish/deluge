@@ -268,6 +268,8 @@ jobs:
 
           pyinstaller --clean Deluge.spec
 
+      - name: Stage Assets and Bundle Dynamic Libraries
+        run: |
           APP_RESOURCES="dist/Deluge.app/Contents/Resources"
           APP_FRAMEWORKS="dist/Deluge.app/Contents/Frameworks"
 
@@ -276,37 +278,73 @@ jobs:
                    "$APP_RESOURCES/share/icons" \
                    "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0"
 
-          # 1. Copy GObject typelibs & GLib schemas
+          # 1. Copy schemas, typelibs, and icons
           cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # 2. Copy icon themes (hicolor & Adwaita)
           if [ -d "$BREW_PREFIX/share/icons" ]; then
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # 3. Copy SVG loader modules and ALL required librsvg/cairo/pango shared libraries
+          # 2. Seed Frameworks with base loaders and dynamic libraries
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX"/lib/libpango*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
-          cp -fv "$BREW_PREFIX"/lib/libharfbuzz*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX"/lib/lib*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 4. Rewrite loader LC_LOAD_DYLIB install names to use @executable_path relative paths
-          for loader in "$APP_FRAMEWORKS"/libpixbufloader*.so; do
-            if [ -f "$loader" ]; then
-              install_name_tool -id "@executable_path/../Frameworks/$(basename "$loader")" "$loader" 2>/dev/null || true
-              # Direct librsvg dependencies to the bundle Frameworks dir
-              otool -L "$loader" | awk '{print $1}' | grep -E 'librsvg|libcairo|libpango|libglib' | while read -r dep; do
-                install_name_tool -change "$dep" "@executable_path/../Frameworks/$(basename "$dep")" "$loader" 2>/dev/null || true
-              done
-            fi
-          done
+          # === INSERT HERE: Harvest all transitive dependencies and rewrite load paths ===
+          python3 -c "
+          import subprocess, os, glob, shutil
 
-          # 5. Generate loaders.cache against the modified binaries in Frameworks
+          fw_dir = '$APP_FRAMEWORKS'
+          brew_prefix = '$BREW_PREFIX'
+
+          def get_deps(file_path):
+              try:
+                  out = subprocess.check_output(['otool', '-L', file_path], text=True)
+                  deps = []
+                  for line in out.splitlines()[1:]:
+                      dep = line.strip().split()[0]
+                      if dep.startswith(brew_prefix) or dep.startswith('/opt/homebrew') or dep.startswith('/usr/local'):
+                          deps.append(dep)
+                  return deps
+              except Exception:
+                  return []
+
+          # Recursively copy missing dylibs
+          processed = set()
+          while True:
+              current_files = set(glob.glob(os.path.join(fw_dir, '*.dylib')) + glob.glob(os.path.join(fw_dir, '*.so')))
+              new_files = current_files - processed
+              if not new_files:
+                  break
+              for f in new_files:
+                  processed.add(f)
+                  for dep in get_deps(f):
+                      if os.path.exists(dep):
+                          dest = os.path.join(fw_dir, os.path.basename(dep))
+                          if not os.path.exists(dest):
+                              shutil.copy2(dep, dest)
+
+          # Rewrite load commands to relative bundle paths
+          all_binaries = glob.glob(os.path.join(fw_dir, '*.dylib')) + glob.glob(os.path.join(fw_dir, '*.so'))
+          for binary in all_binaries:
+              name = os.path.basename(binary)
+              subprocess.run(['install_name_tool', '-id', f'@executable_path/../Frameworks/{name}', binary], stderr=subprocess.DEVNULL)
+              try:
+                  out = subprocess.check_output(['otool', '-L', binary], text=True)
+                  for line in out.splitlines()[1:]:
+                      dep = line.strip().split()[0]
+                      if not dep.startswith('@executable_path') and not dep.startswith('/System') and not dep.startswith('/usr/lib'):
+                          dep_name = os.path.basename(dep)
+                          subprocess.run(['install_name_tool', '-change', dep, f'@executable_path/../Frameworks/{dep_name}', binary], stderr=subprocess.DEVNULL)
+              except Exception:
+                  pass
+          "
+
+          # 3. Generate loaders.cache LAST after all libraries and path rewrites are in place
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so > "$LOADERS_CACHE"
+          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so > "$LOADERS_CACHE" 2>/dev/null || \
+          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
 
           python3 -c "
           import os
