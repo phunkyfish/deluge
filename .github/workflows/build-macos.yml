@@ -276,27 +276,34 @@ jobs:
                    "$APP_RESOURCES/share/icons" \
                    "$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0"
 
+          # Copy GObject typelibs & GLib schemas
           cp -fv "$BREW_PREFIX"/lib/girepository-1.0/*.typelib "$APP_RESOURCES/girepository-1.0/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX/share/glib-2.0/schemas"/*.xml "$APP_RESOURCES/share/glib-2.0/schemas/"
           glib-compile-schemas "$APP_RESOURCES/share/glib-2.0/schemas/"
 
-          # 1. Copy icon themes
+          # Copy icons including hicolor theme
           if [ -d "$BREW_PREFIX/share/icons" ]; then
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # 2. Copy SVG loader modules and librsvg
+          # Copy ALL pixbuf loaders AND librsvg shared libraries into Frameworks
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -fv "$BREW_PREFIX"/lib/librsvg*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
+          cp -fv "$BREW_PREFIX"/lib/libcairo*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 3. Build loaders.cache against Frameworks binaries
+          # Point loader module dependent paths back to @executable_path/../Frameworks
+          for loader in "$APP_FRAMEWORKS"/libpixbufloader*.so; do
+            if [ -f "$loader" ]; then
+              install_name_tool -id "@executable_path/../Frameworks/$(basename "$loader")" "$loader" 2>/dev/null || true
+            fi
+          done
+
+          # Regenerate loaders.cache
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
+          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/libpixbufloader*.so > "$LOADERS_CACHE"
 
-          # Fix paths inside loaders.cache without messing up syntax or internal quotes
           python3 -c "
           import os
-
           cache_p = '$LOADERS_CACHE'
           with open(cache_p, 'r') as f:
               lines = f.readlines()
@@ -304,7 +311,6 @@ jobs:
           with open(cache_p, 'w') as f:
               for line in lines:
                   if line.startswith('\"'):
-                      # Extract full path inside outer quotes
                       path = line.split('\"')[1]
                       filename = os.path.basename(path)
                       rest_of_line = line[len(path) + 2:]
@@ -563,12 +569,16 @@ jobs:
               setenv("DYLD_LIBRARY_PATH", fw_dir, 1);
               setenv("DYLD_FRAMEWORK_PATH", fw_dir, 1);
 
-              // GTK / GdkPixbuf / GI variables must be set at C level before Python bindings start loading shared libs
+              // GTK / GdkPixbuf / GI variables set at C level
               setenv("GDK_PIXBUF_MODULE_FILE", cache_path, 1);
               setenv("GDK_PIXBUF_MODULEDIR", fw_dir, 1);
               setenv("GI_TYPELIB_PATH", typelib_dir, 1);
               setenv("GSETTINGS_SCHEMA_DIR", schema_dir, 1);
-              setenv("XDG_DATA_DIRS", share_dir, 1);
+
+              // Ensure both Resources and Resources/share are included in XDG_DATA_DIRS
+              char xdg_dirs[PATH_MAX * 2];
+              snprintf(xdg_dirs, sizeof(xdg_dirs), "%s:%s/share", res_dir, res_dir);
+              setenv("XDG_DATA_DIRS", xdg_dirs, 1);
 
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
