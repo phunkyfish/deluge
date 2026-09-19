@@ -286,29 +286,15 @@ jobs:
             cp -R "$BREW_PREFIX/share/icons/"* "$APP_RESOURCES/share/icons/" 2>/dev/null || true
           fi
 
-          # 2. Copy pixbuf loaders directly into Frameworks (so dyld locates them naturally)
+          # 2. Copy pixbuf loaders into Frameworks
           cp -fv "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # 3. Generate loaders.cache pointing explicitly to @executable_path/../Frameworks/
+          # 3. Generate loaders.cache and update paths safely
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-          gdk-pixbuf-query-loaders "$BREW_PREFIX"/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.so > "$LOADERS_CACHE"
+          gdk-pixbuf-query-loaders "$APP_FRAMEWORKS"/*.so > "$LOADERS_CACHE"
 
-          # Replace local Homebrew paths with @executable_path relative references for Hardened Runtime
-          sed -i '' -E 's|"[^"]*/([^/]+\.so)"|r"@executable_path/../Frameworks/\1"|g' "$LOADERS_CACHE"
-          sed -i '' -E 's|@executable_path/../Frameworks/|@executable_path/../Frameworks/|g' "$LOADERS_CACHE"
-          # Simple clean path replace:
-          python3 -c "
-          cache_p = '$LOADERS_CACHE'
-          with open(cache_p, 'r') as f:
-              lines = f.readlines()
-          with open(cache_p, 'w') as f:
-              for line in lines:
-                  if line.startswith('\"'):
-                      so_name = line.split('/')[-1].replace('\"', '').strip()
-                      f.write(f'\"@executable_path/../Frameworks/{so_name}\"\n')
-                  else:
-                      f.write(line)
-          "
+          # Replace absolute host paths with @executable_path relative paths
+          sed -i '' "s|/.*Frameworks/|@executable_path/../Frameworks/|g" "$LOADERS_CACHE"
 
           # STRIP BINARIES
           echo "=== Stripping Debug Symbols ==="
