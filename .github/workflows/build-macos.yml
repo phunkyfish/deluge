@@ -93,8 +93,6 @@ jobs:
           import logging
           import multiprocessing
           import xml
-
-          # Force inclusion of WebUI templates & OpenSSL dynamic bindings
           import mako
           import cryptography
           import OpenSSL
@@ -140,14 +138,20 @@ jobs:
             --exclude-module=tk \
             --exclude-module=twisted.trial \
             --collect-all=deluge \
+            --collect-all=mako \
             --collect-binaries=gi \
             --collect-binaries=cairo \
             --collect-submodules=gi \
             --collect-submodules=twisted \
             --collect-submodules=zope.interface \
-            --hidden-import=mako \
-            --hidden-import=cryptography \
-            --hidden-import=openssl \
+            --collect-submodules=asyncio \
+            --collect-submodules=logging \
+            --collect-submodules=xml \
+            --collect-submodules=concurrent \
+            --hidden-import=subprocess \
+            --hidden-import=threading \
+            --hidden-import=_contextvars \
+            --hidden-import=multiprocessing \
             --hidden-import=libtorrent \
             --hidden-import=pkg_resources \
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
