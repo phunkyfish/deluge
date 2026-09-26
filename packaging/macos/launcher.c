@@ -97,15 +97,18 @@ int main(int argc, char *argv[]) {
     wchar_t *w_zip = Py_DecodeLocale(zip_path, NULL);
     wchar_t *w_fw  = Py_DecodeLocale(real_fw, NULL);
     wchar_t *w_res = Py_DecodeLocale(real_res, NULL);
+    wchar_t *w_exe = Py_DecodeLocale(exec_dir, NULL);
 
-    // Prioritize base_library.zip over Frameworks/
+    // FIX: Append exec_dir (Contents/MacOS) so PyInstaller binaries & C-extensions are found
     PyWideStringList_Append(&config.module_search_paths, w_zip);
+    PyWideStringList_Append(&config.module_search_paths, w_exe);
     PyWideStringList_Append(&config.module_search_paths, w_res);
     PyWideStringList_Append(&config.module_search_paths, w_fw);
 
     PyMem_RawFree(w_zip);
     PyMem_RawFree(w_fw);
     PyMem_RawFree(w_res);
+    PyMem_RawFree(w_exe);
 
     status = Py_InitializeFromConfig(&config);
     PyConfig_Clear(&config);
@@ -122,10 +125,12 @@ int main(int argc, char *argv[]) {
         "fw = os.path.join(bundle, 'Frameworks')\n"
         "zip_path = os.path.join(res, 'base_library.zip')\n"
         "\n"
-        "sys.path = [p for p in sys.path if p != fw]\n"
-        "for p in [zip_path, res, exec_dir, fw]:\n"
-        "    if os.path.exists(p) and p not in sys.path:\n"
+        "# Re-order sys.path: zip first, then exec_dir, Resources, Frameworks\n"
+        "sys.path = [p for p in sys.path if p not in (fw, res, exec_dir, zip_path)]\n"
+        "for p in [zip_path, exec_dir, res, fw]:\n"
+        "    if os.path.exists(p):\n"
         "        sys.path.insert(0, p)\n"
+        "\n"
         "try:\n"
         "    import gettext\n"
         "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
@@ -151,7 +156,7 @@ int main(int argc, char *argv[]) {
         "        proc = subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True)\n"
         "        if 'button returned:Install' in proc.stdout:\n"
         "            subprocess.run([sys.executable, '--install-cli'])\n"
-        "    except Exception as e:\n"
+        "    except Exception:\n"
         "        pass\n"
         "\n"
         "entry_mode = os.path.basename(sys.executable).lower()\n"
