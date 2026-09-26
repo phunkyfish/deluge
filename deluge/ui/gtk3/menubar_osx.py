@@ -5,6 +5,9 @@
 # the additional special exception to link portions of this program with the OpenSSL library.
 # See LICENSE for more details.
 #
+import subprocess
+import sys
+
 from gi.repository import Gtk
 
 from deluge.configmanager import ConfigManager
@@ -19,6 +22,47 @@ macos_main_window_accelmap = {
     '<Deluge-MainWindow>/View/Find ...': '<Meta>f',
     '<Deluge-MainWindow>/Help/FAQ': '<Meta>question',
 }
+
+
+def install_cli_tools(widget=None, data=None):
+    """Triggers the macOS C launcher to install symlinks in /usr/local/bin."""
+    try:
+        res = subprocess.run(
+            [sys.executable, '--install-cli'], capture_output=True, text=True
+        )
+        if res.returncode == 0:
+            msg = (
+                "Command-line shortcuts (deluge, deluged, deluge-web, deluge-console) "
+                "were successfully linked in /usr/local/bin."
+            )
+            msg_type = Gtk.MessageType.INFO
+            title = "CLI Tools Installed"
+        else:
+            msg = "Installation was cancelled or failed to acquire administrator privileges."
+            msg_type = Gtk.MessageType.WARNING
+            title = "Installation Cancelled"
+
+        dialog = Gtk.MessageDialog(
+            transient_for=None,
+            flags=0,
+            message_type=msg_type,
+            buttons=Gtk.ButtonsType.OK,
+            text=title,
+        )
+        dialog.format_secondary_text(msg)
+        dialog.run()
+        dialog.destroy()
+    except Exception as e:
+        dialog = Gtk.MessageDialog(
+            transient_for=None,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Error",
+        )
+        dialog.format_secondary_text(str(e))
+        dialog.run()
+        dialog.destroy()
 
 
 def menubar_osx(gtkui, osxapp):
@@ -55,14 +99,30 @@ def menubar_osx(gtkui, osxapp):
     help_menu.remove(about_item)
     help_menu.remove(help_items[3])  # separator
 
+    # Create "Install Command Line Tools..." item
+    cli_item = Gtk.MenuItem(label=_('Install Command Line Tools...'))
+    cli_item.connect('activate', install_cli_tools)
+    cli_item.show()
+
     menubar.hide()
     osxapp.set_menu_bar(menubar)
-    # populate app menu
+
+    # Populate macOS native Application menu
     osxapp.insert_app_menu_item(about_item, 0)
     osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), 1)
     osxapp.insert_app_menu_item(pref_item, 2)
+
+    pos = 3
     if not config['standalone']:
-        osxapp.insert_app_menu_item(conn_item, 3)
+        osxapp.insert_app_menu_item(conn_item, pos)
+        pos += 1
+
+    osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), pos)
+    pos += 1
+    osxapp.insert_app_menu_item(cli_item, pos)
+    pos += 1
+
     if quit_all_item.get_visible():
-        osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), 4)
-        osxapp.insert_app_menu_item(quit_all_item, 5)
+        osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), pos)
+        pos += 1
+        osxapp.insert_app_menu_item(quit_all_item, pos)

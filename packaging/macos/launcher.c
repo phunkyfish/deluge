@@ -7,6 +7,34 @@
 #include <string.h>
 #include <unistd.h>
 
+int install_cli_symlinks(const char *exec_dir) {
+    char bundle[PATH_MAX];
+    snprintf(bundle, sizeof(bundle), "%s/..", exec_dir);
+
+    char real_bundle[PATH_MAX];
+    if (!realpath(bundle, real_bundle)) return 1;
+
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "osascript -e 'do shell script \""
+        "mkdir -p /usr/local/bin && "
+        "ln -sf \\\"%s/MacOS/Deluge\\\" /usr/local/bin/deluge && "
+        "ln -sf \\\"%s/MacOS/deluged\\\" /usr/local/bin/deluged && "
+        "ln -sf \\\"%s/MacOS/deluge-web\\\" /usr/local/bin/deluge-web && "
+        "ln -sf \\\"%s/MacOS/deluge-console\\\" /usr/local/bin/deluge-console"
+        "\" with administrator privileges'",
+        real_bundle, real_bundle, real_bundle, real_bundle
+    );
+
+    int status = system(cmd);
+    if (status == 0) {
+        printf("Successfully installed CLI symlinks in /usr/local/bin\n");
+    } else {
+        fprintf(stderr, "Failed or cancelled installing CLI symlinks.\n");
+    }
+    return status;
+}
+
 int main(int argc, char *argv[]) {
     char path[PATH_MAX];
     uint32_t size = sizeof(path);
@@ -15,6 +43,11 @@ int main(int argc, char *argv[]) {
     char resolved_path[PATH_MAX];
     if (!realpath(path, resolved_path)) return 1;
     char *exec_dir = dirname(resolved_path);
+
+    // Check if invoked purely to install CLI symlinks
+    if (argc > 1 && strcmp(argv[1], "--install-cli") == 0) {
+        return install_cli_symlinks(exec_dir);
+    }
 
     char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX];
     snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
@@ -79,7 +112,7 @@ int main(int argc, char *argv[]) {
     if (PyStatus_Exception(status)) return 1;
 
     const char *script =
-        "import sys, os, builtins, warnings\n"
+        "import sys, os, builtins, warnings, subprocess\n"
         "warnings.filterwarnings('ignore')\n"
         "\n"
         "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
@@ -98,6 +131,28 @@ int main(int argc, char *argv[]) {
         "except Exception:\n"
         "    builtins._ = lambda msg: msg\n"
         "\n"
+        "def prompt_cli_installer_if_needed():\n"
+        "    if sys.platform != 'darwin':\n"
+        "        return\n"
+        "    flag_file = os.path.expanduser('~/.config/deluge/.mac_cli_prompted')\n"
+        "    if os.path.exists(flag_file):\n"
+        "        return\n"
+        "    try:\n"
+        "        os.makedirs(os.path.dirname(flag_file), exist_ok=True)\n"
+        "        with open(flag_file, 'w') as f:\n"
+        "            f.write('1')\n"
+        "        # Ask user if they want to set up command line shortcuts\n"
+        "        apple_script = (\n"
+        "            'display dialog \"Would you like to install Deluge command-line shortcuts ' \n"
+        "            '(deluge, deluged, deluge-web, deluge-console) in /usr/local/bin?\" ' \n"
+        "            'buttons {\"Cancel\", \"Install\"} default button \"Install\"'\n"
+        "        )\n"
+        "        proc = subprocess.run(['osascript', '-e', apple_script], capture_output=True, text=True)\n"
+        "        if 'button returned:Install' in proc.stdout:\n"
+        "            subprocess.run([sys.executable, '--install-cli'])\n"
+        "    except Exception as e:\n"
+        "        pass\n"
+        "\n"
         "entry_mode = os.path.basename(sys.executable).lower()\n"
         "if 'deluged' in entry_mode:\n"
         "    from deluge.core.daemon_entry import start_daemon\n"
@@ -112,6 +167,7 @@ int main(int argc, char *argv[]) {
         "    if len(sys.argv) > 1 and sys.argv[1] == '-c':\n"
         "        exec(sys.argv[2])\n"
         "    else:\n"
+        "        prompt_cli_installer_if_needed()\n"
         "        import argparse\n"
         "        from deluge.ui.gtk3.gtkui import GtkUI\n"
         "        args = argparse.Namespace(torrents=[])\n"

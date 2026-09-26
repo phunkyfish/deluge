@@ -373,7 +373,7 @@ jobs:
             PY_INC="/Library/Frameworks/Python.framework/Versions/$PY_VER/include/python$PY_VER"
           fi
 
-          LAUNCHERS=("Deluge" "deluged" "deluge-web" "deluge-console")
+          LAUNCHERS=("Deluge" "deluge" "deluged" "deluge-web" "deluge-console")
 
           for launcher in "${LAUNCHERS[@]}"; do
             echo "Compiling Universal2 launcher: $launcher"
@@ -472,58 +472,47 @@ jobs:
               '</plist>' > "$FRAMEWORK_DIR/Resources/Info.plist"
           fi
 
-          # Purge stale signatures
-          find "$FINAL_APP/Contents" -type f \( -name "libtcl*.dylib" -o -name "libtk*.dylib" \) -exec rm -f {} + 2>/dev/null || true
+          # 1. Purge all existing signatures
           find "$FINAL_APP/Contents" -type f ! -type l | while read -r file; do
             if file -b "$file" | grep -q "Mach-O"; then
               codesign --remove-signature "$file" 2>/dev/null || true
             fi
           done
 
-          # Sign Dynamic Libraries
-          FILES_TO_SIGN=$(mktemp)
-          find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
-
-          LAUNCHERS=("Deluge" "deluged" "deluge-web" "deluge-console")
-
-          while read -r file; do
-            is_launcher=0
-            for l in "${LAUNCHERS[@]}"; do
-              if [ "$file" == "$FINAL_APP/Contents/MacOS/$l" ]; then
-                is_launcher=1
-                break
-              fi
-            done
-
-            if [ "$is_launcher" -eq 0 ] && [[ "$file" != *"/Python.framework/"* ]]; then
-              if file -b "$file" | grep -q "Mach-O"; then
-                codesign --force --options runtime --timestamp \
-                  --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
-                  --keychain build.keychain "$file"
-              fi
+          # 2. Inside-Out Signing Stage 1: Sign all nested dynamic libraries (.dylib, .so)
+          find "$FINAL_APP/Contents/Frameworks" "$FINAL_APP/Contents/Resources" -type f ! -type l | while read -r file; do
+            if file -b "$file" | grep -q "Mach-O"; then
+              codesign --force --options runtime --timestamp \
+                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
+                --keychain build.keychain "$file"
             fi
-          done < "$FILES_TO_SIGN"
-          rm -f "$FILES_TO_SIGN"
+          done
 
-          # Sign Python Framework
+          # 3. Inside-Out Signing Stage 2: Sign Python Framework
           if [ -d "$FRAMEWORK_DIR" ]; then
             codesign --force --options runtime --timestamp \
               --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
               --keychain build.keychain "$FRAMEWORK_DIR"
           fi
 
-          # Sign Executable Launchers
+          # 4. Inside-Out Signing Stage 3: Sign ALL binaries in Contents/MacOS/
+          # Signing all launchers explicitly with entitlements ensures subcomponents are sealed
+          LAUNCHERS=("deluged" "deluge-web" "deluge-console" "deluge" "Deluge")
           for launcher in "${LAUNCHERS[@]}"; do
-            codesign --force --options runtime --timestamp --entitlements entitlements.plist \
-              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-              "$FINAL_APP/Contents/MacOS/$launcher"
+            EXEC_PATH="$FINAL_APP/Contents/MacOS/$launcher"
+            if [ -f "$EXEC_PATH" ]; then
+              codesign --force --options runtime --timestamp --entitlements entitlements.plist \
+                --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
+                "$EXEC_PATH"
+            fi
           done
 
-          # Sign Main Bundle
+          # 5. Inside-Out Signing Stage 4: Sign Main Outer App Bundle Container (NO --deep)
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"
 
+          # 6. Strict Verification Pass (NO --deep)
           cd "$GITHUB_WORKSPACE/dist"
           codesign --verify --verbose=4 --strict "Deluge.app"
 
