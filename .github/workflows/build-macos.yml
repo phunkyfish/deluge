@@ -241,6 +241,9 @@ jobs:
 
           chmod -R 755 "$APP_FRAMEWORKS"
 
+          # Clean out loose .py scripts in Frameworks root to prevent stdlib shadowing
+          find dist/Deluge.app/Contents/Frameworks -maxdepth 1 -name "*.py" -delete
+
       - name: Archive Thin App Bundle (Preserves Symlinks)
         run: |
           cd dist

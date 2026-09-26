@@ -98,9 +98,10 @@ int main(int argc, char *argv[]) {
     wchar_t *w_fw  = Py_DecodeLocale(real_fw, NULL);
     wchar_t *w_res = Py_DecodeLocale(real_res, NULL);
 
+    // Prioritize base_library.zip over Frameworks/
     PyWideStringList_Append(&config.module_search_paths, w_zip);
-    PyWideStringList_Append(&config.module_search_paths, w_fw);
     PyWideStringList_Append(&config.module_search_paths, w_res);
+    PyWideStringList_Append(&config.module_search_paths, w_fw);
 
     PyMem_RawFree(w_zip);
     PyMem_RawFree(w_fw);
@@ -121,10 +122,10 @@ int main(int argc, char *argv[]) {
         "fw = os.path.join(bundle, 'Frameworks')\n"
         "zip_path = os.path.join(res, 'base_library.zip')\n"
         "\n"
-        "for p in [zip_path, fw, res, exec_dir]:\n"
+        "sys.path = [p for p in sys.path if p != fw]\n"
+        "for p in [zip_path, res, exec_dir, fw]:\n"
         "    if os.path.exists(p) and p not in sys.path:\n"
         "        sys.path.insert(0, p)\n"
-        "\n"
         "try:\n"
         "    import gettext\n"
         "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
