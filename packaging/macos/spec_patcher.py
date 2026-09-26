@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import os
 import site
-import sysconfig
+import re
 
 def patch_spec(spec_path="Deluge.spec"):
     site_pkgs = site.getsitepackages()[0]
-    stdlib_path = sysconfig.get_path("stdlib")
 
-    # Essential standard library packages that must be bundled
-    REQUIRED_STDLIB_MODULES = [
+    # Standard library modules to explicitly mandate
+    REQUIRED_STDLIB = [
         "subprocess",
         "threading",
         "asyncio",
@@ -21,9 +20,6 @@ def patch_spec(spec_path="Deluge.spec"):
         "contextvars",
         "_contextvars",
     ]
-
-    extra_imports = [f"'{mod}'" for mod in REQUIRED_STDLIB_MODULES]
-    hidden_str = f"hiddenimports=[{', '.join(extra_imports)}],"
 
     ignored_dirs = {
         "__pycache__",
@@ -39,7 +35,7 @@ def patch_spec(spec_path="Deluge.spec"):
 
     extra_datas = []
 
-    # Collect non-python assets from site-packages
+    # Walk site-packages strictly for non-python data assets
     if os.path.exists(site_pkgs):
         for root, dirs, files in os.walk(site_pkgs):
             dirs[:] = [
@@ -60,16 +56,19 @@ def patch_spec(spec_path="Deluge.spec"):
     with open(spec_path, "r") as f:
         content = f.read()
 
-    # Inject forced hidden imports and site-packages datas
+    # 1. Inject extra_datas variable definition at top of spec
     injection = f"extra_datas = {extra_datas}\n"
     content = content.replace("a = Analysis(", injection + "a = Analysis(")
     content = content.replace("datas=datas,", "datas=datas + extra_datas,")
 
-    # Force hiddenimports in Analysis
+    # 2. Append required stdlib imports to hiddenimports=[...] safely
+    hidden_imports_str = ", ".join([f"'{mod}'" for mod in REQUIRED_STDLIB])
+
     if "hiddenimports=[" in content:
-        content = content.replace("hiddenimports=[", f"hiddenimports=[{', '.join(extra_imports)}, ")
+        content = content.replace("hiddenimports=[", f"hiddenimports=[{hidden_imports_str}, ")
     else:
-        content = content.replace("a = Analysis(", f"a = Analysis(\n    {hidden_str}")
+        # If hiddenimports isn't explicitly defined in Analysis, add it as a keyword argument
+        content = content.replace("datas=datas", f"hiddenimports=[{hidden_imports_str}],\n    datas=datas")
 
     with open(spec_path, "w") as f:
         f.write(content)
