@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
 import os
 import site
-import re
 
 def patch_spec(spec_path="Deluge.spec"):
     site_pkgs = site.getsitepackages()[0]
-
-    # Standard library modules to explicitly mandate
-    REQUIRED_STDLIB = [
-        "subprocess",
-        "threading",
-        "asyncio",
-        "logging",
-        "multiprocessing",
-        "xml",
-        "concurrent",
-        "gettext",
-        "argparse",
-        "contextvars",
-        "_contextvars",
-    ]
 
     ignored_dirs = {
         "__pycache__",
@@ -56,19 +40,10 @@ def patch_spec(spec_path="Deluge.spec"):
     with open(spec_path, "r") as f:
         content = f.read()
 
-    # 1. Inject extra_datas variable definition at top of spec
+    # Inject extra_datas variable and update datas= line ONLY
     injection = f"extra_datas = {extra_datas}\n"
     content = content.replace("a = Analysis(", injection + "a = Analysis(")
     content = content.replace("datas=datas,", "datas=datas + extra_datas,")
-
-    # 2. Append required stdlib imports to hiddenimports=[...] safely
-    hidden_imports_str = ", ".join([f"'{mod}'" for mod in REQUIRED_STDLIB])
-
-    if "hiddenimports=[" in content:
-        content = content.replace("hiddenimports=[", f"hiddenimports=[{hidden_imports_str}, ")
-    else:
-        # If hiddenimports isn't explicitly defined in Analysis, add it as a keyword argument
-        content = content.replace("datas=datas", f"hiddenimports=[{hidden_imports_str}],\n    datas=datas")
 
     with open(spec_path, "w") as f:
         f.write(content)

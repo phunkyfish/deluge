@@ -83,41 +83,30 @@ jobs:
 
           # 3. Synthesize multi-entry dispatcher script
           cat <<'EOF' > run_deluge.py
-          import sys
-          import builtins
-          import gettext
-          import subprocess
-          import threading
-          import _contextvars
-          import asyncio
-          import logging
-          import multiprocessing
-          import xml
-          import mako
-          import cryptography
-          import OpenSSL
+          import sys, builtins, gettext, argparse
+          import subprocess, threading, _contextvars, asyncio, logging, multiprocessing, xml
+          import mako, cryptography, OpenSSL
 
           try:
-              trans = gettext.translation('deluge', fallback=True)
-              builtins._ = trans.gettext
+              builtins._ = gettext.translation('deluge', fallback=True).gettext
           except Exception:
               builtins._ = lambda msg: msg
 
           if '_' not in builtins.__dict__:
               builtins.__dict__['_'] = lambda msg: msg
 
-          # Explicit imports ensure PyInstaller collects modules for all entrypoints
           import deluge.core.daemon
           import deluge.ui.gtk3.gtkui
           import deluge.ui.web.web
           import deluge.ui.console.console
+          from deluge.ui.gtk3.gtkui import GtkUI
 
           def start():
-              from deluge.ui.gtk3.gtkui import GtkUI
-              import argparse
-              args = argparse.Namespace(torrents=[])
-              ui = GtkUI(args)
-              ui.start()
+              if len(sys.argv) > 1 and sys.argv[1] == '-c':
+                  exec(sys.argv[2])
+              else:
+                  args = argparse.Namespace(torrents=[])
+                  GtkUI(args).start()
 
           if __name__ == '__main__':
               start()
@@ -161,7 +150,7 @@ jobs:
           # Patch Deluge.spec via repo helper script
           python3 packaging/macos/spec_patcher.py
 
-          pyinstaller --clean Deluge.spec
+          pyinstaller --noconfirm Deluge.spec
 
       - name: Stage Assets and Bundle Dynamic Libraries
         run: |
