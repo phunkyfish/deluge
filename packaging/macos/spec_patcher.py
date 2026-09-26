@@ -19,7 +19,6 @@ def patch_spec(spec_path="Deluge.spec"):
 
     extra_datas = []
 
-    # Only walk site-packages for non-Python data assets (skipping .py/.so/stdlib)
     if os.path.exists(site_pkgs):
         for root, dirs, files in os.walk(site_pkgs):
             dirs[:] = [
@@ -30,7 +29,6 @@ def patch_spec(spec_path="Deluge.spec"):
                 and not d.endswith(".egg-info")
             ]
             for f in files:
-                # Skip compiled object files AND raw python scripts (PyInstaller collects .py files into base_library.zip)
                 if f.endswith(ignored_exts) or f.endswith(".py"):
                     continue
                 full_p = os.path.join(root, f)
