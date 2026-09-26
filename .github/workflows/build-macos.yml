@@ -81,7 +81,7 @@ jobs:
           SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
           cp -r $BREW_PREFIX/lib/python3.11/site-packages/libtorrent* "$SITE_PACKAGES/" 2>/dev/null || true
 
-          # 3. Synthesize bootstrapper entrypoint
+          # 3. Synthesize multi-entry dispatcher script
           cat <<'EOF' > run_deluge.py
           import sys
           import builtins
@@ -96,16 +96,18 @@ jobs:
           if '_' not in builtins.__dict__:
               builtins.__dict__['_'] = lambda msg: msg
 
-          from deluge.ui.gtk3.gtkui import GtkUI
-          import argparse
+          # Explicit imports ensure PyInstaller collects modules for all entrypoints
+          import deluge.core.daemon
+          import deluge.ui.gtk3.gtkui
+          import deluge.ui.web.web
+          import deluge.ui.console.console
 
           def start():
-              if len(sys.argv) > 1 and sys.argv[1] == '-c':
-                  exec(sys.argv[2])
-              else:
-                  args = argparse.Namespace(torrents=[])
-                  ui = GtkUI(args)
-                  ui.start()
+              from deluge.ui.gtk3.gtkui import GtkUI
+              import argparse
+              args = argparse.Namespace(torrents=[])
+              ui = GtkUI(args)
+              ui.start()
 
           if __name__ == '__main__':
               start()
@@ -132,64 +134,15 @@ jobs:
             --collect-submodules=twisted \
             --collect-submodules=zope.interface \
             --hidden-import=libtorrent \
+            --hidden-import=mako \
+            --hidden-import=cryptography \
+            --hidden-import=openssl \
             --add-data "$BREW_PREFIX/lib/girepository-1.0:gi_typelibs" \
             --osx-bundle-identifier="org.deluge-torrent.deluge" \
             run_deluge.py
 
-          # Patch Deluge.spec to include logging, asyncio, gettext, xml inside Analysis.datas
-          python3.11 -c "
-          import sysconfig, os, site
-
-          spec_path = 'Deluge.spec'
-          stdlib = sysconfig.get_path('stdlib')
-          site_pkgs = site.getsitepackages()[0]
-          lib_dynload = os.path.join(stdlib, 'lib-dynload')
-
-          ignored_dirs = {'__pycache__', 'test', 'tests', 'idlelib', 'tkinter', 'turtledemo', 'pip', 'wheel'}
-          ignored_exts = ('.a', '.o', '.pyc')
-
-          extra_datas = []
-
-          # Walk pure Python stdlib modules
-          for root, dirs, files in os.walk(stdlib):
-              dirs[:] = [d for d in dirs if d not in ignored_dirs and d != 'site-packages' and d != 'lib-dynload' and not d.startswith('config-')]
-              for f in files:
-                  if f.endswith(ignored_exts) or f.endswith('.so') or f.endswith('.dylib'):
-                      continue
-                  full_p = os.path.join(root, f)
-                  rel_p = os.path.relpath(full_p, stdlib)
-                  dest_dir = os.path.dirname(rel_p)
-                  extra_datas.append((full_p, dest_dir if dest_dir else '.'))
-
-          # Include stdlib C-extensions
-          if os.path.exists(lib_dynload):
-              for f in os.listdir(lib_dynload):
-                  if f.endswith('.so'):
-                      full_p = os.path.join(lib_dynload, f)
-                      extra_datas.append((full_p, '.'))
-
-          # Walk site-packages
-          if os.path.exists(site_pkgs):
-              for root, dirs, files in os.walk(site_pkgs):
-                  dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith('.dist-info') and not d.endswith('.egg-info')]
-                  for f in files:
-                      if f.endswith(ignored_exts):
-                          continue
-                      full_p = os.path.join(root, f)
-                      rel_p = os.path.relpath(full_p, site_pkgs)
-                      dest_dir = os.path.dirname(rel_p)
-                      extra_datas.append((full_p, dest_dir if dest_dir else '.'))
-
-          with open(spec_path, 'r') as f:
-              content = f.read()
-
-          injection = f'extra_datas = {extra_datas}\n'
-          content = content.replace('a = Analysis(', injection + 'a = Analysis(')
-          content = content.replace('datas=datas,', 'datas=datas + extra_datas,')
-
-          with open(spec_path, 'w') as f:
-              f.write(content)
-          "
+          # Patch Deluge.spec via repo helper script
+          python3 packaging/macos/spec_patcher.py
 
           pyinstaller --clean Deluge.spec
 
@@ -219,7 +172,7 @@ jobs:
 
           chmod -R u+w "$APP_RESOURCES/share/icons" 2>/dev/null || true
 
-          # Inject Deluge's app icons
+          # Inject Deluge app icons
           mkdir -p "$APP_RESOURCES/share/icons/hicolor/scalable/apps"
           find "$GITHUB_WORKSPACE" -name "deluge.svg" -exec cp -fv {} "$APP_RESOURCES/share/icons/hicolor/scalable/apps/" \; 2>/dev/null || true
 
@@ -245,90 +198,15 @@ jobs:
           cp -Pfv "$BREW_PREFIX"/opt/gtk+3/lib/libgtk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
           cp -Pfv "$BREW_PREFIX"/opt/gtk+3/lib/libgdk-3*.dylib "$APP_FRAMEWORKS/" 2>/dev/null || true
 
-          # === Symlink-Aware Dependency Harvester with Strict @loader_path Rewriting ===
-          python3 -c "
-          import subprocess, os, glob, shutil
-
-          fw_dir = os.path.abspath('$APP_FRAMEWORKS')
-          brew_prefix = os.path.realpath('$BREW_PREFIX')
-
-          EXCLUDED_NAMES = {'libnode', 'libruby'}
-
-          def copy_with_symlinks(src, dest_dir):
-              filename = os.path.basename(src)
-              dest_path = os.path.join(dest_dir, filename)
-
-              if os.path.exists(dest_path) or os.path.islink(dest_path):
-                  return
-
-              if os.path.islink(src):
-                  link_target = os.readlink(src)
-                  os.symlink(link_target, dest_path)
-                  real_src = os.path.realpath(src)
-                  if os.path.exists(real_src):
-                      copy_with_symlinks(real_src, dest_dir)
-              else:
-                  shutil.copy2(src, dest_path)
-                  os.chmod(dest_path, 0o755)
-
-          def get_deps(file_path):
-              try:
-                  out = subprocess.check_output(['otool', '-L', file_path], text=True)
-                  deps = []
-                  for line in out.splitlines()[1:]:
-                      dep = line.strip().split()[0]
-                      base_name = os.path.basename(dep)
-                      if any(base_name.startswith(ex) for ex in EXCLUDED_NAMES):
-                          continue
-
-                      real_dep = os.path.realpath(dep)
-                      if real_dep.startswith(brew_prefix) or dep.startswith('/opt/homebrew') or dep.startswith('/usr/local') or 'Cellar' in dep:
-                          deps.append((dep, real_dep))
-                  return deps
-              except Exception:
-                  return []
-
-          processed = set()
-          while True:
-              current_files = set()
-              for root, _, files in os.walk(fw_dir):
-                  for file in files:
-                      if file.endswith('.dylib') or file.endswith('.so'):
-                          current_files.add(os.path.join(root, file))
-
-              new_files = current_files - processed
-              if not new_files:
-                  break
-              for f in new_files:
-                  processed.add(f)
-                  if os.path.islink(f):
-                      continue
-                  for raw_path, real_path in get_deps(f):
-                      src_to_copy = raw_path if (os.path.exists(raw_path) or os.path.islink(raw_path)) else real_path
-                      if os.path.exists(src_to_copy) or os.path.islink(src_to_copy):
-                          copy_with_symlinks(src_to_copy, fw_dir)
-
-          all_binaries = [b for b in glob.glob(os.path.join(fw_dir, '*.dylib')) + glob.glob(os.path.join(fw_dir, '*.so')) if not os.path.islink(b)]
-          for binary in all_binaries:
-              name = os.path.basename(binary)
-              subprocess.run(['install_name_tool', '-id', f'@rpath/{name}', binary], stderr=subprocess.DEVNULL)
-              try:
-                  out = subprocess.check_output(['otool', '-L', binary], text=True)
-                  for line in out.splitlines()[1:]:
-                      dep = line.strip().split()[0]
-                      if not dep.startswith('/System') and not dep.startswith('/usr/lib'):
-                          dep_name = os.path.basename(dep)
-                          subprocess.run(['install_name_tool', '-change', dep, f'@loader_path/{dep_name}', binary], stderr=subprocess.DEVNULL)
-              except Exception:
-                  pass
-          "
+          # Run dependency harvester from repo helper script
+          python3 packaging/macos/harvest_deps.py "$APP_FRAMEWORKS" "$BREW_PREFIX"
 
           # 3. Strip Debug Symbols
           echo "=== Stripping Debug Symbols ==="
           find "$APP_FRAMEWORKS" -type f \( -name "*.dylib" -o -name "*.so" \) ! -type l -exec strip -x {} \; 2>/dev/null || true
           find "$APP_RESOURCES" -type f -name "*.so" ! -type l -exec strip -x {} \; 2>/dev/null || true
 
-          # 4. Generate loaders.cache directly from the loaders subfolder
+          # 4. Generate loaders.cache directly from loaders subfolder
           LOADERS_CACHE="$APP_RESOURCES/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
           LOADERS_DIR="$APP_FRAMEWORKS/lib/gdk-pixbuf/loaders"
 
@@ -473,7 +351,7 @@ jobs:
           find "$ARM_APP/Contents" -type f ! -type l 2>/dev/null | while read -r arm_file; do
             rel_path="${arm_file#$ARM_APP/Contents/}"
 
-            if [[ "$rel_path" == "MacOS/Deluge" ]] || [[ "$rel_path" == *"Python.framework/Python"* ]] || [[ "$rel_path" == *"Python.framework/Versions/"* ]]; then
+            if [[ "$rel_path" == "MacOS/"* ]] || [[ "$rel_path" == *"Python.framework/Python"* ]] || [[ "$rel_path" == *"Python.framework/Versions/"* ]]; then
               continue
             fi
 
@@ -486,7 +364,7 @@ jobs:
             fi
           done
 
-          # Compile Native Universal2 Launcher Executable
+          # Compile Native Universal2 Launchers for all Deluge entry points
           PY_VER="3.11"
           BUNDLE_FRAMEWORKS="$FINAL_APP/Contents/Frameworks"
           PY_INC="$BUNDLE_FRAMEWORKS/Python.framework/Versions/$PY_VER/include/python$PY_VER"
@@ -495,140 +373,24 @@ jobs:
             PY_INC="/Library/Frameworks/Python.framework/Versions/$PY_VER/include/python$PY_VER"
           fi
 
-          cat <<EOF > launcher.c
-          #include <Python.h>
-          #include <libgen.h>
-          #include <limits.h>
-          #include <mach-o/dyld.h>
-          #include <stdio.h>
-          #include <stdlib.h>
-          #include <string.h>
-          #include <unistd.h>
+          LAUNCHERS=("Deluge" "deluged" "deluge-web" "deluge-console")
 
-          int main(int argc, char *argv[]) {
-              char path[PATH_MAX];
-              uint32_t size = sizeof(path);
-              if (_NSGetExecutablePath(path, &size) != 0) return 1;
+          for launcher in "${LAUNCHERS[@]}"; do
+            echo "Compiling Universal2 launcher: $launcher"
+            clang -arch arm64 -arch x86_64 \
+              -I"$PY_INC" \
+              -F"$BUNDLE_FRAMEWORKS" \
+              -framework Python \
+              -rpath "@executable_path/../Frameworks" \
+              packaging/macos/launcher.c -o "$FINAL_APP/Contents/MacOS/$launcher"
 
-              char resolved_path[PATH_MAX];
-              if (!realpath(path, resolved_path)) return 1;
-              char *exec_dir = dirname(resolved_path);
+            HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/$launcher" | grep "Python.framework" | awk '{print $1}' | sort -u | head -n 1)
+            if [ -n "$HARDCODED_PATH" ]; then
+              install_name_tool -change "$HARDCODED_PATH" "@rpath/Python.framework/Versions/$PY_VER/Python" "$FINAL_APP/Contents/MacOS/$launcher"
+            fi
 
-              char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX];
-              snprintf(zip_path, sizeof(zip_path), "%s/../Resources/base_library.zip", exec_dir);
-              snprintf(fw_dir, sizeof(fw_dir), "%s/../Frameworks", exec_dir);
-              snprintf(res_dir, sizeof(res_dir), "%s/../Resources", exec_dir);
-              snprintf(schema_dir, sizeof(schema_dir), "%s/../Resources/share/glib-2.0/schemas", exec_dir);
-              snprintf(typelib_dir, sizeof(typelib_dir), "%s/../Resources/girepository-1.0", exec_dir);
-
-              char real_fw[PATH_MAX], real_res[PATH_MAX];
-              if (!realpath(fw_dir, real_fw)) return 1;
-              if (!realpath(res_dir, real_res)) return 1;
-
-              char cache_path[PATH_MAX];
-              snprintf(cache_path, sizeof(cache_path), "%s/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache", real_res);
-
-              unsetenv("DYLD_FALLBACK_LIBRARY_PATH");
-              unsetenv("DYLD_FALLBACK_FRAMEWORK_PATH");
-              unsetenv("DYLD_LIBRARY_PATH");
-              unsetenv("DYLD_FRAMEWORK_PATH");
-
-              setenv("DYLD_LIBRARY_PATH", real_fw, 1);
-              setenv("DYLD_FRAMEWORK_PATH", real_fw, 1);
-              setenv("GDK_PIXBUF_MODULEDIR", real_fw, 1);
-              setenv("GDK_PIXBUF_MODULE_FILE", cache_path, 1);
-              setenv("GI_TYPELIB_PATH", typelib_dir, 1);
-              setenv("GSETTINGS_SCHEMA_DIR", schema_dir, 1);
-
-              char xdg_dirs[PATH_MAX * 2];
-              snprintf(xdg_dirs, sizeof(xdg_dirs), "%s:%s/share", real_res, real_res);
-              setenv("XDG_DATA_DIRS", xdg_dirs, 1);
-
-              char icon_dirs[PATH_MAX];
-              snprintf(icon_dirs, sizeof(icon_dirs), "%s/share/icons", real_res);
-              setenv("XDG_DATA_HOME", icon_dirs, 1);
-
-              PyConfig config;
-              PyConfig_InitIsolatedConfig(&config);
-
-              PyWideStringList_Append(&config.warnoptions, L"ignore::UserWarning:pkg_resources");
-              PyWideStringList_Append(&config.warnoptions, L"ignore::DeprecationWarning");
-
-              PyStatus status = PyConfig_SetBytesArgv(&config, argc, argv);
-              if (PyStatus_Exception(status)) return 1;
-
-              config.module_search_paths_set = 1;
-
-              wchar_t *w_zip = Py_DecodeLocale(zip_path, NULL);
-              wchar_t *w_fw  = Py_DecodeLocale(real_fw, NULL);
-              wchar_t *w_res = Py_DecodeLocale(real_res, NULL);
-
-              PyWideStringList_Append(&config.module_search_paths, w_zip);
-              PyWideStringList_Append(&config.module_search_paths, w_fw);
-              PyWideStringList_Append(&config.module_search_paths, w_res);
-
-              PyMem_RawFree(w_zip);
-              PyMem_RawFree(w_fw);
-              PyMem_RawFree(w_res);
-
-              status = Py_InitializeFromConfig(&config);
-              PyConfig_Clear(&config);
-
-              if (PyStatus_Exception(status)) return 1;
-
-              const char *script =
-                  "import sys, os, builtins, warnings\n"
-                  "warnings.filterwarnings('ignore', category=UserWarning, module='.*pkg_resources.*')\n"
-                  "warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*')\n"
-                  "warnings.filterwarnings('ignore', category=DeprecationWarning)\n"
-                  "\n"
-                  "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
-                  "bundle = os.path.abspath(os.path.join(exec_dir, '..'))\n"
-                  "res = os.path.join(bundle, 'Resources')\n"
-                  "fw = os.path.join(bundle, 'Frameworks')\n"
-                  "zip_path = os.path.join(res, 'base_library.zip')\n"
-                  "\n"
-                  "for p in [zip_path, fw, res, exec_dir]:\n"
-                  "    if os.path.exists(p) and p not in sys.path:\n"
-                  "        sys.path.insert(0, p)\n"
-                  "\n"
-                  "os.environ['GDK_PIXBUF_MODULE_FILE'] = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')\n"
-                  "os.environ['GDK_PIXBUF_MODULEDIR'] = fw\n"
-                  "\n"
-                  "try:\n"
-                  "    import gettext\n"
-                  "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
-                  "except Exception:\n"
-                  "    builtins._ = lambda msg: msg\n"
-                  "\n"
-                  "if len(sys.argv) > 1 and sys.argv[1] == '-c':\n"
-                  "    exec(sys.argv[2])\n"
-                  "else:\n"
-                  "    import argparse\n"
-                  "    from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "    args = argparse.Namespace(torrents=[])\n"
-                  "    GtkUI(args).start()\n";
-
-              int result = PyRun_SimpleString(script);
-              Py_Finalize();
-              return result;
-          }
-          EOF
-
-          clang -arch arm64 -arch x86_64 \
-            -I"$PY_INC" \
-            -F"$BUNDLE_FRAMEWORKS" \
-            -framework Python \
-            -rpath "@executable_path/../Frameworks" \
-            launcher.c -o "$FINAL_APP/Contents/MacOS/Deluge"
-
-          HARDCODED_PATH=$(otool -L "$FINAL_APP/Contents/MacOS/Deluge" | grep "Python.framework" | awk '{print $1}' | sort -u | head -n 1)
-          if [ -n "$HARDCODED_PATH" ]; then
-            install_name_tool -change "$HARDCODED_PATH" "@rpath/Python.framework/Versions/$PY_VER/Python" "$FINAL_APP/Contents/MacOS/Deluge"
-          fi
-
-          chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
-          rm -f launcher.c
+            chmod +x "$FINAL_APP/Contents/MacOS/$launcher"
+          done
 
       - name: Clean Broken Symlinks in Bundle
         run: |
@@ -685,7 +447,6 @@ jobs:
           security set-keychain-settings -lut 7200 build.keychain
           security unlock-keychain -p "temporary_actions_password" build.keychain
 
-          chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           FRAMEWORK_DIR="$FINAL_APP/Contents/Frameworks/Python.framework"
 
           if [ -d "$FRAMEWORK_DIR" ] && [ ! -f "$FRAMEWORK_DIR/Resources/Info.plist" ] && [ ! -f "$FRAMEWORK_DIR/Info.plist" ]; then
@@ -723,8 +484,18 @@ jobs:
           FILES_TO_SIGN=$(mktemp)
           find "$FINAL_APP/Contents" -type f ! -type l > "$FILES_TO_SIGN"
 
+          LAUNCHERS=("Deluge" "deluged" "deluge-web" "deluge-console")
+
           while read -r file; do
-            if [ "$file" != "$FINAL_APP/Contents/MacOS/Deluge" ] && [[ "$file" != *"/Python.framework/"* ]]; then
+            is_launcher=0
+            for l in "${LAUNCHERS[@]}"; do
+              if [ "$file" == "$FINAL_APP/Contents/MacOS/$l" ]; then
+                is_launcher=1
+                break
+              fi
+            done
+
+            if [ "$is_launcher" -eq 0 ] && [[ "$file" != *"/Python.framework/"* ]]; then
               if file -b "$file" | grep -q "Mach-O"; then
                 codesign --force --options runtime --timestamp \
                   --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
@@ -734,17 +505,21 @@ jobs:
           done < "$FILES_TO_SIGN"
           rm -f "$FILES_TO_SIGN"
 
-          # Sign Python Framework, Executable, and Outer Bundle
+          # Sign Python Framework
           if [ -d "$FRAMEWORK_DIR" ]; then
             codesign --force --options runtime --timestamp \
               --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" \
               --keychain build.keychain "$FRAMEWORK_DIR"
           fi
 
-          codesign --force --options runtime --timestamp --entitlements entitlements.plist \
-            --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
-            "$FINAL_APP/Contents/MacOS/Deluge"
+          # Sign Executable Launchers
+          for launcher in "${LAUNCHERS[@]}"; do
+            codesign --force --options runtime --timestamp --entitlements entitlements.plist \
+              --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
+              "$FINAL_APP/Contents/MacOS/$launcher"
+          done
 
+          # Sign Main Bundle
           codesign --force --options runtime --timestamp --entitlements entitlements.plist \
             --sign "${{ secrets.APPLE_DEVELOPER_IDENTITY }}" --keychain build.keychain \
             "$FINAL_APP"

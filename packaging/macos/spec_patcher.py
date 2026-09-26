@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+import os
+import site
+import sys
+import sysconfig
+
+def patch_spec(spec_path="Deluge.spec"):
+    stdlib = sysconfig.get_path("stdlib")
+    site_pkgs = site.getsitepackages()[0]
+    lib_dynload = os.path.join(stdlib, "lib-dynload")
+
+    ignored_dirs = {
+        "__pycache__",
+        "test",
+        "tests",
+        "idlelib",
+        "tkinter",
+        "turtledemo",
+        "pip",
+        "wheel",
+    }
+    ignored_exts = (".a", ".o", ".pyc")
+
+    extra_datas = []
+
+    # Walk pure Python stdlib modules
+    for root, dirs, files in os.walk(stdlib):
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in ignored_dirs
+            and d != "site-packages"
+            and d != "lib-dynload"
+            and not d.startswith("config-")
+        ]
+        for f in files:
+            if f.endswith(ignored_exts) or f.endswith(".so") or f.endswith(".dylib"):
+                continue
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, stdlib)
+            dest_dir = os.path.dirname(rel_p)
+            extra_datas.append((full_p, dest_dir if dest_dir else "."))
+
+    # Include stdlib C-extensions
+    if os.path.exists(lib_dynload):
+        for f in os.listdir(lib_dynload):
+            if f.endswith(".so"):
+                full_p = os.path.join(lib_dynload, f)
+                extra_datas.append((full_p, "."))
+
+    # Walk site-packages
+    if os.path.exists(site_pkgs):
+        for root, dirs, files in os.walk(site_pkgs):
+            dirs[:] = [
+                d
+                for d in dirs
+                if d not in ignored_dirs
+                and not d.endswith(".dist-info")
+                and not d.endswith(".egg-info")
+            ]
+            for f in files:
+                if f.endswith(ignored_exts):
+                    continue
+                full_p = os.path.join(root, f)
+                rel_p = os.path.relpath(full_p, site_pkgs)
+                dest_dir = os.path.dirname(rel_p)
+                extra_datas.append((full_p, dest_dir if dest_dir else "."))
+
+    with open(spec_path, "r") as f:
+        content = f.read()
+
+    injection = f"extra_datas = {extra_datas}\n"
+    content = content.replace("a = Analysis(", injection + "a = Analysis(")
+    content = content.replace("datas=datas,", "datas=datas + extra_datas,")
+
+    with open(spec_path, "w") as f:
+        f.write(content)
+
+if __name__ == "__main__":
+    patch_spec()
