@@ -67,11 +67,8 @@ jobs:
           # 2. Pre-install build dependencies directly into the main environment
           python3 -m pip install "setuptools==81.0.0" "Cython<3.0" poetry-core wheel
 
-          git clone --quiet https://github.com/aresch/rencode.git
-          cd rencode
-          git checkout --quiet e7ec8ea718e73a8fee7dbc007c262e1584f7f94b
-          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation .
-          cd -
+          # We need the rencode build to use our poetry and cython so we use no build isolation
+          ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install --no-build-isolation rencode
 
           python3 -m pip install pygobject pycairo
           ARCHFLAGS="-arch ${{ matrix.arch }}" python3 -m pip install .
