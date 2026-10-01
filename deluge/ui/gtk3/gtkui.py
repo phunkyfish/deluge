@@ -19,6 +19,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 
 # isort:imports-thirdparty
+from gi.repository import Gio, Gtk
 from gi.repository.GLib import set_prgname
 from gi.repository.Gtk import Builder, ResponseType
 from twisted.internet import defer, gtk3reactor
@@ -149,21 +150,26 @@ class GtkUI:
             log.debug('OS signal "die" caught with args: %s', args)
             reactor.stop()
 
-        self.osxapp = None
+        self.app = None
         if windows_check():
             from win32api import SetConsoleCtrlHandler
 
             SetConsoleCtrlHandler(on_die, True)
             log.debug('Win32 "die" handler registered')
-        elif osx_check() and windowing('quartz'):
+        elif sys.platform == 'darwin':
+            # Initialize native Gtk/Gio Application for macOS
             try:
-                import gtkosx_application
-            except ImportError:
-                pass
-            else:
-                self.osxapp = gtkosx_application.gtkosx_application_get()
-                self.osxapp.connect('NSApplicationWillTerminate', on_die)
-                log.debug('OSX quartz "die" handler registered')
+                self.app = Gtk.Application.get_default()
+                if not self.app:
+                    self.app = Gtk.Application(
+                        application_id='org.deluge_torrent.deluge',
+                        flags=Gio.ApplicationFlags.FLAGS_NONE,
+                    )
+                    self.app.register()
+                self.app.connect('shutdown', on_die)
+                log.debug('macOS Gio.Application registered')
+            except Exception as e:
+                log.warning('Failed to load Gio.Application on macOS: %s', e)
 
         # Set process name again to fix gtk issue
         setproctitle(getproctitle())
@@ -206,19 +212,18 @@ class GtkUI:
         self.statusbar = StatusBar()
         self.addtorrentdialog = AddTorrentDialog()
 
-        if self.osxapp:
+        if self.app:
+            # Handle native macOS file association events via Gio.Application
+            def on_gio_open(app, files, hint):
+                filenames = [f.get_path() for f in files if f.get_path()]
+                if filenames:
+                    process_args(filenames)
 
-            def nsapp_open_file(osxapp, filename):
-                # Ignore command name which is raised at app launch (python opening main script).
-                if filename == sys.argv[0]:
-                    return True
-                process_args([filename])
+            self.app.connect('open', on_gio_open)
 
-            self.osxapp.connect('NSApplicationOpenFile', nsapp_open_file)
             from .menubar_osx import menubar_osx
 
-            menubar_osx(self, self.osxapp)
-            self.osxapp.ready()
+            menubar_osx(self, self.app)
 
         # Initialize the plugins
         self.plugins = PluginManager()
@@ -244,12 +249,9 @@ class GtkUI:
     def start(self):
         reactor.callWhenRunning(self._on_reactor_start)
         reactor.run()
-        # Reactor is not running. Any async callbacks (Deferreds) can no longer
-        # be processed from this point on.
 
     def shutdown(self, *args, **kwargs):
         log.debug('GTKUI shutting down...')
-        # Shutdown all components
         if client.is_standalone:
             return component.shutdown()
 
@@ -258,21 +260,14 @@ class GtkUI:
         if self.closing:
             return
         self.closing = True
-        # Make sure the config is saved.
         self.config.save()
-        # Ensure columns state is saved
         self.torrentview.save_state()
-        # Shut down components
         yield self.shutdown()
 
-        # The gtk modal dialogs (e.g. Preferences) can prevent the application
-        # quitting, so force exiting by destroying MainWindow. Must be done here
-        # to avoid hanging when quitting with SIGINT (CTRL-C).
         self.mainwindow.window.destroy()
 
         reactor.stop()
 
-        # Restart the application after closing if MainWindow restart attribute set.
         if component.get('MainWindow').restart:
             os.execv(sys.argv[0], sys.argv)
 
@@ -345,14 +340,11 @@ class GtkUI:
         def on_dialog_response(response):
             """User response to switching mode dialog."""
             if response == ResponseType.YES:
-                # Turning off standalone
                 self.config['standalone'] = False
                 self._start_thinclient()
             else:
-                # User want keep Standalone Mode so just quit.
                 self.mainwindow.quit()
 
-        # An error occurred so ask user to switch from Standalone to Thin Client mode.
         err_msg += '\n\n' + _('Continue in Thin Client mode?')
         d = YesNoDialog(_('Change User Interface Mode'), err_msg).run()
         d.addCallback(on_dialog_response)
@@ -362,7 +354,6 @@ class GtkUI:
         if log.isEnabledFor(logging.DEBUG):
             self.rpc_stats.start(10)
 
-        # Check to see if we need to start the localhost daemon
         if self.config['autostart_localhost']:
 
             def on_localhost_status(status_info, port):
@@ -376,7 +367,6 @@ class GtkUI:
                     d.addCallback(on_localhost_status, host_config[2])
                     break
 
-        # Autoconnect to a host
         if self.config['autoconnect']:
             for host_config in self.connectionmanager.hostlist.config['hosts']:
                 host_id, host, port, user, __ = host_config
@@ -386,7 +376,6 @@ class GtkUI:
                     break
 
         if self.config['show_connection_manager_on_start']:
-            # Dialog is blocking so call last.
             self.connectionmanager.show()
 
     def __on_disconnect(self):
