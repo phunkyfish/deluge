@@ -784,24 +784,51 @@ jobs:
         run: |
           DMG_NAME="Deluge-${{ env.RESOLVED_APP_VERSION }}-Universal.dmg"
 
+          echo "Submitting $DMG_NAME to Apple Notary Service..."
+
+          # Run submission and store raw output
+          set +e
           SUBMISSION_OUT=$(xcrun notarytool submit "$DMG_NAME" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" \
             --team-id "$TEAM_ID" \
             --wait 2>&1)
+          SUBMISSION_EXIT_CODE=$?
+          set -e
 
+          echo "=== Notarytool Output ==="
           echo "$SUBMISSION_OUT"
-          SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | awk '/id: / { print $2; exit; }')
 
-          if echo "$SUBMISSION_OUT" | grep -qE "status: (Invalid|Rejected)" || [ -z "$SUBMISSION_ID" ]; then
-            echo "=== Notarization Failed. Fetching Log... ==="
-            [ -n "$SUBMISSION_ID" ] && xcrun notarytool log "$SUBMISSION_ID" \
+          # Attempt to extract Submission ID via regex match for UUID format
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n 1)
+
+          # Fallback: Query recent history if ID wasn't in stdout
+          if [ -z "$SUBMISSION_ID" ]; then
+            echo "Failed to parse Submission ID directly. Checking notary history..."
+            SUBMISSION_ID=$(xcrun notarytool history \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_PASSWORD" \
-              --team-id "$TEAM_ID"
+              --team-id "$TEAM_ID" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n 1)
+          fi
+
+          # If submission failed or status is invalid, fetch detailed JSON log
+          if [ $SUBMISSION_EXIT_CODE -ne 0 ] || echo "$SUBMISSION_OUT" | grep -qE "status: (Invalid|Rejected)"; then
+            echo "=================================================="
+            echo "=== NOTARIZATION FAILED! FETCHING DETAILED LOG ==="
+            echo "=================================================="
+            if [ -n "$SUBMISSION_ID" ]; then
+              echo "Fetching log for Submission ID: $SUBMISSION_ID"
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_PASSWORD" \
+                --team-id "$TEAM_ID"
+            else
+              echo "ERROR: Could not retrieve a valid Submission ID from Apple."
+            fi
             exit 1
           fi
 
+          echo "Notarization successful! Stapling ticket..."
           sleep 5
           xcrun stapler staple "$DMG_NAME"
           xcrun stapler validate "$DMG_NAME"
