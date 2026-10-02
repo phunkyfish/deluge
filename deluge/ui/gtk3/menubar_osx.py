@@ -29,6 +29,26 @@ macos_main_window_accelmap = {
 }
 
 
+def ensure_dialog_focus(main_window):
+    """
+    Scans for open GTK dialogs/toplevels and transfers Aqua keyboard focus
+    from the main window to the active dialog.
+    """
+    for win in Gtk.Window.list_toplevels():
+        if isinstance(win, Gtk.Window) and win.is_visible() and win != main_window:
+            win.set_transient_for(main_window)
+            if isinstance(win, Gtk.Dialog):
+                win.set_modal(True)
+
+            current_time = Gdk.CURRENT_TIME
+            win.present_with_time(current_time)
+
+            gdk_win = win.get_window()
+            if gdk_win:
+                gdk_win.focus(current_time)
+                gdk_win.raise_()
+
+
 def install_cli_tools_action(action, parameter, gtkui):
     """Triggers elevated AppleScript to symlink bundled macOS binaries into /usr/local/bin."""
     try:
@@ -62,6 +82,7 @@ def install_cli_tools_action(action, parameter, gtkui):
             dialog.format_secondary_text(
                 _('All command-line shortcuts in /usr/local/bin are up to date.')
             )
+            ensure_dialog_focus(gtkui.mainwindow.window)
             dialog.run()
             dialog.destroy()
             return
@@ -99,6 +120,7 @@ def install_cli_tools_action(action, parameter, gtkui):
             text=title,
         )
         dialog.format_secondary_text(msg)
+        ensure_dialog_focus(gtkui.mainwindow.window)
         dialog.run()
         dialog.destroy()
 
@@ -111,6 +133,7 @@ def install_cli_tools_action(action, parameter, gtkui):
             text=_('Error'),
         )
         dialog.format_secondary_text(str(e))
+        ensure_dialog_focus(gtkui.mainwindow.window)
         dialog.run()
         dialog.destroy()
 
@@ -183,10 +206,18 @@ def menubar_osx(gtkui, app):
         'faq': lambda a, p: trigger_widget_action('menuitem_faq'),
     }
 
+    def wrap_action_callback(callback):
+        """Wraps action callbacks to enforce window manager focus on newly opened dialogs."""
+        def wrapped(a, p):
+            callback(a, p)
+            # Schedule focus pass right after GTK finishes processing action event
+            Gdk.threads_add_idle(Gdk.PRIORITY_DEFAULT_IDLE, lambda: ensure_dialog_focus(gtkui.mainwindow.window))
+        return wrapped
+
     for action_name, callback in action_map.items():
         if not app.has_action(action_name):
             act = Gio.SimpleAction.new(action_name, None)
-            act.connect('activate', callback)
+            act.connect('activate', wrap_action_callback(callback))
             app.add_action(act)
             registered_actions[action_name] = act
 
