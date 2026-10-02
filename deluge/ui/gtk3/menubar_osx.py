@@ -31,22 +31,24 @@ _current_dark_mode_state = None
 
 
 def is_macos_dark_mode():
-    """Detects if macOS is currently in Dark Mode using Gio.Settings directly."""
+    """
+    Detects if macOS is currently in Dark Mode.
+    macOS deletes AppleInterfaceStyle in light mode, so check_output returning non-zero means Light Mode.
+    """
     if sys.platform != 'darwin':
         return False
     try:
-        settings = Gio.Settings.new('org.gnome.desktop.interface')
-        color_scheme = settings.get_string('color-scheme')
-        return color_scheme == 'prefer-dark'
+        res = subprocess.run(
+            ['defaults', 'read', '-g', 'AppleInterfaceStyle'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode == 0 and res.stdout.strip().lower() == 'dark':
+            return True
     except Exception:
         pass
-
-    try:
-        cmd = ['defaults', 'read', '-g', 'AppleInterfaceStyle']
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-        return output.decode('utf-8').strip().lower() == 'dark'
-    except Exception:
-        return False
+    return False
 
 
 def apply_dark_mode(enabled, force=False):
@@ -58,12 +60,12 @@ def apply_dark_mode(enabled, force=False):
     if _current_dark_mode_state != enabled or force:
         _current_dark_mode_state = enabled
 
-        # Update active GTK3 display settings directly in memory
+        # 1. Update active GTK3 display settings directly in memory
         settings = Gtk.Settings.get_default()
         if settings:
             settings.set_property('gtk-application-prefer-dark-theme', enabled)
 
-        # Persist to Deluge's UI config without opening or saving Preferences dialog
+        # 2. Persist to Deluge's UI config without opening or saving Preferences dialog
         try:
             config = ConfigManager('gtk3ui.conf')
             config['choose_theme'] = enabled
@@ -76,7 +78,7 @@ def sync_macos_theme(force=False):
     """Checks macOS system appearance and syncs GTK on GLib main thread."""
     system_dark = is_macos_dark_mode()
     apply_dark_mode(system_dark, force=force)
-    return True  # Keep GLib.timeout_add_seconds active
+    return True  # Keeps GLib.timeout_add_seconds running
 
 
 def ensure_dialog_focus(main_window):
@@ -213,10 +215,10 @@ def install_cli_tools_action(action, parameter, gtkui):
 
 
 def menubar_osx(gtkui, app):
-    # Initial theme sync on startup
-    sync_macos_theme()
+    # Schedule theme application on GLib idle queue once GTK window is realized
+    GLib.idle_add(lambda: sync_macos_theme(force=True))
 
-    # GLib main-loop timeout instead of Twisted task.LoopingCall
+    # Poll macOS theme status every 5 seconds on main GLib loop
     GLib.timeout_add_seconds(5, sync_macos_theme)
 
     # Apply macOS key shortcuts
