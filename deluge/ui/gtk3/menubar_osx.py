@@ -11,7 +11,6 @@ import subprocess
 import sys
 
 from gi.repository import Gdk, Gio, GLib, Gtk
-from twisted.internet import task
 
 import deluge.component as component
 from deluge.configmanager import ConfigManager
@@ -32,9 +31,16 @@ _current_dark_mode_state = None
 
 
 def is_macos_dark_mode():
-    """Detects if macOS is currently in Dark Mode via system defaults."""
+    """Detects if macOS is currently in Dark Mode using Gio.Settings directly."""
     if sys.platform != 'darwin':
         return False
+    try:
+        settings = Gio.Settings.new('org.gnome.desktop.interface')
+        color_scheme = settings.get_string('color-scheme')
+        return color_scheme == 'prefer-dark'
+    except Exception:
+        pass
+
     try:
         cmd = ['defaults', 'read', '-g', 'AppleInterfaceStyle']
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
@@ -52,12 +58,12 @@ def apply_dark_mode(enabled, force=False):
     if _current_dark_mode_state != enabled or force:
         _current_dark_mode_state = enabled
 
-        # 1. Update active GTK3 display settings directly in memory
+        # Update active GTK3 display settings directly in memory
         settings = Gtk.Settings.get_default()
         if settings:
             settings.set_property('gtk-application-prefer-dark-theme', enabled)
 
-        # 2. Persist to Deluge's UI config without opening or saving Preferences dialog
+        # Persist to Deluge's UI config without opening or saving Preferences dialog
         try:
             config = ConfigManager('gtk3ui.conf')
             config['choose_theme'] = enabled
@@ -67,9 +73,10 @@ def apply_dark_mode(enabled, force=False):
 
 
 def sync_macos_theme(force=False):
-    """Polled by task.LoopingCall or called on demand: checks macOS system appearance and syncs GTK."""
+    """Checks macOS system appearance and syncs GTK on GLib main thread."""
     system_dark = is_macos_dark_mode()
     apply_dark_mode(system_dark, force=force)
+    return True  # Keep GLib.timeout_add_seconds active
 
 
 def ensure_dialog_focus(main_window):
@@ -95,7 +102,7 @@ def ensure_dialog_focus(main_window):
 def hide_and_override_preferences_theme(gtkui):
     """
     Locates and hides the theme selection widget inside Preferences,
-    and hooks into the dialog's show and hide events to prevent GTK from
+    and hooks into the dialog's show/hide events to prevent GTK from
     resetting the theme to light when opening or closing.
     """
     try:
@@ -109,7 +116,6 @@ def hide_and_override_preferences_theme(gtkui):
 
         pref_dialog = pref_builder.get_object('preferences_dialog')
         if pref_dialog and not getattr(pref_dialog, '_theme_hook_connected', False):
-            # Re-apply theme both when Preferences opens and when it closes/applies
             pref_dialog.connect('show', lambda w: GLib.idle_add(lambda: sync_macos_theme(force=True)))
             pref_dialog.connect('hide', lambda w: GLib.idle_add(lambda: sync_macos_theme(force=True)))
             pref_dialog._theme_hook_connected = True
@@ -210,9 +216,8 @@ def menubar_osx(gtkui, app):
     # Initial theme sync on startup
     sync_macos_theme()
 
-    # Poll macOS theme status every 3 seconds to auto-switch light/dark mode
-    theme_poller = task.LoopingCall(sync_macos_theme)
-    theme_poller.start(3.0)
+    # GLib main-loop timeout instead of Twisted task.LoopingCall
+    GLib.timeout_add_seconds(5, sync_macos_theme)
 
     # Apply macOS key shortcuts
     for accel_path, accelerator in macos_main_window_accelmap.items():
@@ -298,7 +303,6 @@ def menubar_osx(gtkui, app):
         """Wraps action callbacks to enforce window manager focus on newly opened dialogs."""
         def wrapped(a, p):
             callback(a, p)
-            # Schedule focus pass right after GTK finishes processing action event
             GLib.idle_add(lambda: ensure_dialog_focus(gtkui.mainwindow.window))
         return wrapped
 
@@ -309,15 +313,15 @@ def menubar_osx(gtkui, app):
             app.add_action(act)
             registered_actions[action_name] = act
 
-    # Monitor connection state and toggle action status
+    # Poll connection status using GLib main thread timeout
     def update_action_states():
         is_connected = client.connected()
         for act_name in connection_dependent_actions:
             if act_name in registered_actions:
                 registered_actions[act_name].set_enabled(is_connected)
+        return True
 
-    connection_poller = task.LoopingCall(update_action_states)
-    connection_poller.start(1.0)
+    GLib.timeout_add_seconds(2, update_action_states)
 
     # Attach Main Window to Gio Application
     app.add_window(gtkui.mainwindow.window)
