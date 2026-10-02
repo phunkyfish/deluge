@@ -28,6 +28,8 @@ macos_main_window_accelmap = {
     '<Deluge-MainWindow>/Help/FAQ': '<Meta>question',
 }
 
+_current_dark_mode_state = None
+
 
 def is_macos_dark_mode():
     """Detects if macOS is currently in Dark Mode via system defaults."""
@@ -42,10 +44,32 @@ def is_macos_dark_mode():
 
 
 def apply_dark_mode(enabled):
-    """Applies the dark theme variant across global GTK settings."""
-    settings = Gtk.Settings.get_default()
-    if settings:
-        settings.set_property('gtk-application-prefer-dark-theme', enabled)
+    """
+    Applies the dark theme variant across global GTK settings and syncs
+    gtk3ui.conf silently without triggering preferences.py.
+    """
+    global _current_dark_mode_state
+    if _current_dark_mode_state != enabled:
+        _current_dark_mode_state = enabled
+
+        # 1. Update active GTK3 display settings directly in memory
+        settings = Gtk.Settings.get_default()
+        if settings:
+            settings.set_property('gtk-application-prefer-dark-theme', enabled)
+
+        # 2. Persist to Deluge's UI config without opening or saving Preferences dialog
+        try:
+            config = ConfigManager('gtk3ui.conf')
+            config['choose_theme'] = enabled
+            config.save()
+        except Exception:
+            pass
+
+
+def sync_macos_theme():
+    """Polled by task.LoopingCall: checks macOS system appearance and syncs GTK."""
+    system_dark = is_macos_dark_mode()
+    apply_dark_mode(system_dark)
 
 
 def ensure_dialog_focus(main_window):
@@ -158,8 +182,12 @@ def install_cli_tools_action(action, parameter, gtkui):
 
 
 def menubar_osx(gtkui, app):
-    # Apply macOS system theme on app startup
-    apply_dark_mode(is_macos_dark_mode())
+    # Initial theme sync on startup
+    sync_macos_theme()
+
+    # Poll macOS theme status every 3 seconds to auto-switch light/dark mode
+    theme_poller = task.LoopingCall(sync_macos_theme)
+    theme_poller.start(3.0)
 
     # Apply macOS key shortcuts
     for accel_path, accelerator in macos_main_window_accelmap.items():
@@ -195,6 +223,12 @@ def menubar_osx(gtkui, app):
             if client.connected():
                 client.core.resume_torrents([])
 
+    def toggle_dark_mode_action(action, parameter):
+        """Manual toggle option in App menu."""
+        global _current_dark_mode_state
+        new_state = not bool(_current_dark_mode_state)
+        apply_dark_mode(new_state)
+
     connection_dependent_actions = {
         'add_torrent',
         'pause_all',
@@ -209,6 +243,7 @@ def menubar_osx(gtkui, app):
         'about': lambda a, p: trigger_widget_action('menuitem_about'),
         'preferences': lambda a, p: trigger_widget_action('menuitem_preferences'),
         'connection_manager': lambda a, p: trigger_widget_action('menuitem_connectionmanager'),
+        'toggle_dark_mode': toggle_dark_mode_action,
         'quit': lambda a, p: gtkui.close(),
         'install_cli': lambda a, p: install_cli_tools_action(a, p, gtkui),
 
@@ -269,6 +304,8 @@ def menubar_osx(gtkui, app):
     config = ConfigManager('gtk3ui.conf')
     if not config['standalone']:
         section_prefs.append(_('Connection Manager'), 'app.connection_manager')
+
+    section_prefs.append(_('Toggle Dark Mode'), 'app.toggle_dark_mode')
     app_menu.append_section(None, section_prefs)
 
     section_cli = Gio.Menu()
