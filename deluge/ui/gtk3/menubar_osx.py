@@ -92,6 +92,24 @@ def ensure_dialog_focus(main_window):
                 gdk_win.raise_()
 
 
+def hide_preferences_theme_option(gtkui):
+    """
+    Locates and permanently hides the theme selection widget inside the
+    Preferences dialog so users don't see or interact with it.
+    """
+    try:
+        pref_builder = gtkui.preferences.builder
+        # Target common dark theme checkbutton/container object names in GTK UI
+        theme_widgets = ['chk_use_dark_theme', 'chk_dark_theme', 'box_theme', 'frame_theme']
+        for widget_id in theme_widgets:
+            widget = pref_builder.get_object(widget_id)
+            if widget:
+                widget.set_no_show_all(True)
+                widget.hide()
+    except Exception:
+        pass
+
+
 def install_cli_tools_action(action, parameter, gtkui):
     """Triggers elevated AppleScript to symlink bundled macOS binaries into /usr/local/bin."""
     try:
@@ -205,6 +223,11 @@ def menubar_osx(gtkui, app):
         if obj:
             obj.emit('activate')
 
+    def open_preferences_action(a, p):
+        """Triggers preferences dialog and hides the theme toggle before displaying."""
+        trigger_widget_action('menuitem_preferences')
+        hide_preferences_theme_option(gtkui)
+
     def trigger_ui_action(action_name):
         """Triggers direct Deluge GTK UI component functions safely."""
         if action_name == 'add_torrent':
@@ -241,7 +264,7 @@ def menubar_osx(gtkui, app):
     action_map = {
         # Deluge App Menu Actions
         'about': lambda a, p: trigger_widget_action('menuitem_about'),
-        'preferences': lambda a, p: trigger_widget_action('menuitem_preferences'),
+        'preferences': open_preferences_action,
         'connection_manager': lambda a, p: trigger_widget_action('menuitem_connectionmanager'),
         'toggle_dark_mode': toggle_dark_mode_action,
         'quit': lambda a, p: gtkui.close(),
