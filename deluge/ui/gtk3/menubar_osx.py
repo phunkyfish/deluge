@@ -43,13 +43,13 @@ def is_macos_dark_mode():
         return False
 
 
-def apply_dark_mode(enabled):
+def apply_dark_mode(enabled, force=False):
     """
     Applies the dark theme variant across global GTK settings and syncs
     gtk3ui.conf silently without triggering preferences.py.
     """
     global _current_dark_mode_state
-    if _current_dark_mode_state != enabled:
+    if _current_dark_mode_state != enabled or force:
         _current_dark_mode_state = enabled
 
         # 1. Update active GTK3 display settings directly in memory
@@ -66,10 +66,10 @@ def apply_dark_mode(enabled):
             pass
 
 
-def sync_macos_theme():
-    """Polled by task.LoopingCall: checks macOS system appearance and syncs GTK."""
+def sync_macos_theme(force=False):
+    """Polled by task.LoopingCall or called on demand: checks macOS system appearance and syncs GTK."""
     system_dark = is_macos_dark_mode()
-    apply_dark_mode(system_dark)
+    apply_dark_mode(system_dark, force=force)
 
 
 def ensure_dialog_focus(main_window):
@@ -92,20 +92,27 @@ def ensure_dialog_focus(main_window):
                 gdk_win.raise_()
 
 
-def hide_preferences_theme_option(gtkui):
+def hide_and_override_preferences_theme(gtkui):
     """
-    Locates and permanently hides the theme selection widget inside the
-    Preferences dialog so users don't see or interact with it.
+    Locates and hides the theme selection widget inside Preferences,
+    and hooks into the dialog's show and hide events to prevent GTK from
+    resetting the theme to light when opening or closing.
     """
     try:
         pref_builder = gtkui.preferences.builder
-        # Target common dark theme checkbutton/container object names in GTK UI
         theme_widgets = ['chk_use_dark_theme', 'chk_dark_theme', 'box_theme', 'frame_theme']
         for widget_id in theme_widgets:
             widget = pref_builder.get_object(widget_id)
             if widget:
                 widget.set_no_show_all(True)
                 widget.hide()
+
+        pref_dialog = pref_builder.get_object('preferences_dialog')
+        if pref_dialog and not getattr(pref_dialog, '_theme_hook_connected', False):
+            # Re-apply theme both when Preferences opens and when it closes/applies
+            pref_dialog.connect('show', lambda w: GLib.idle_add(lambda: sync_macos_theme(force=True)))
+            pref_dialog.connect('hide', lambda w: GLib.idle_add(lambda: sync_macos_theme(force=True)))
+            pref_dialog._theme_hook_connected = True
     except Exception:
         pass
 
@@ -224,9 +231,10 @@ def menubar_osx(gtkui, app):
             obj.emit('activate')
 
     def open_preferences_action(a, p):
-        """Triggers preferences dialog and hides the theme toggle before displaying."""
+        """Triggers preferences dialog, hides theme options, and forces theme retention."""
         trigger_widget_action('menuitem_preferences')
-        hide_preferences_theme_option(gtkui)
+        hide_and_override_preferences_theme(gtkui)
+        GLib.idle_add(lambda: sync_macos_theme(force=True))
 
     def trigger_ui_action(action_name):
         """Triggers direct Deluge GTK UI component functions safely."""
@@ -250,7 +258,7 @@ def menubar_osx(gtkui, app):
         """Manual toggle option in App menu."""
         global _current_dark_mode_state
         new_state = not bool(_current_dark_mode_state)
-        apply_dark_mode(new_state)
+        apply_dark_mode(new_state, force=True)
 
     connection_dependent_actions = {
         'add_torrent',
