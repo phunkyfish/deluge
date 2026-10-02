@@ -10,7 +10,7 @@ import os
 import subprocess
 import sys
 
-from gi.repository import Gdk, Gio, Gtk
+from gi.repository import Gdk, Gio, GLib, Gtk
 from twisted.internet import task
 
 import deluge.component as component
@@ -27,6 +27,25 @@ macos_main_window_accelmap = {
     '<Deluge-MainWindow>/View/Find ...': '<Meta>f',
     '<Deluge-MainWindow>/Help/FAQ': '<Meta>question',
 }
+
+
+def is_macos_dark_mode():
+    """Detects if macOS is currently in Dark Mode via system defaults."""
+    if sys.platform != 'darwin':
+        return False
+    try:
+        cmd = ['defaults', 'read', '-g', 'AppleInterfaceStyle']
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+        return output.decode('utf-8').strip().lower() == 'dark'
+    except Exception:
+        return False
+
+
+def apply_dark_mode(enabled):
+    """Applies the dark theme variant across global GTK settings."""
+    settings = Gtk.Settings.get_default()
+    if settings:
+        settings.set_property('gtk-application-prefer-dark-theme', enabled)
 
 
 def ensure_dialog_focus(main_window):
@@ -139,6 +158,9 @@ def install_cli_tools_action(action, parameter, gtkui):
 
 
 def menubar_osx(gtkui, app):
+    # Apply macOS system theme on app startup
+    apply_dark_mode(is_macos_dark_mode())
+
     # Apply macOS key shortcuts
     for accel_path, accelerator in macos_main_window_accelmap.items():
         accel_key, accel_mods = Gtk.accelerator_parse(accelerator)
@@ -211,7 +233,7 @@ def menubar_osx(gtkui, app):
         def wrapped(a, p):
             callback(a, p)
             # Schedule focus pass right after GTK finishes processing action event
-            Gdk.threads_add_idle(Gdk.PRIORITY_DEFAULT_IDLE, lambda: ensure_dialog_focus(gtkui.mainwindow.window))
+            GLib.idle_add(lambda: ensure_dialog_focus(gtkui.mainwindow.window))
         return wrapped
 
     for action_name, callback in action_map.items():
