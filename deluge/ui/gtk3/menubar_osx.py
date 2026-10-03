@@ -218,19 +218,35 @@ def menubar_osx(gtkui, app):
             GLib.idle_add(lambda: sync_macos_theme(force=True))
 
     def quit_action(a, p):
-        # 1. Hide main window immediately to give instant visual feedback
+        import os
+        from twisted.internet import reactor
+
+        # 1. Hide windows for instant UI response
         if hasattr(gtkui.mainwindow, 'window'):
             gtkui.mainwindow.window.hide()
 
-        # 2. Release Gtk.Application holding locks
+        # 2. Release Gtk Application reference
         if app:
             if hasattr(gtkui.mainwindow, 'window'):
-                app.remove_window(gtkui.mainwindow.window)
+                try:
+                    app.remove_window(gtkui.mainwindow.window)
+                except Exception:
+                    pass
             app.quit()
 
-        # 3. Fire Deluge's reactor shutdown sequence
-        from twisted.internet import reactor
+        # 3. Save config/state and force exit when Twisted finishes closing
+        def force_exit():
+            try:
+                gtkui.config.save()
+                if hasattr(gtkui, 'torrentview'):
+                    gtkui.torrentview.save_state()
+            except Exception:
+                pass
+            os._exit(0)
+
+        # Trigger Twisted shutdown sequence and exit process cleanly
         reactor.callLater(0, reactor.fireSystemEvent, 'gtkui_close')
+        reactor.callLater(0.2, force_exit)
 
     def trigger_ui_action(action_name):
         if action_name == 'add_torrent':
