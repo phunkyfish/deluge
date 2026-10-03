@@ -218,7 +218,17 @@ def menubar_osx(gtkui, app):
             GLib.idle_add(lambda: sync_macos_theme(force=True))
 
     def quit_action(a, p):
-        # Fire Deluge's standard shutdown sequence via Twisted reactor
+        # 1. Hide main window immediately to give instant visual feedback
+        if hasattr(gtkui.mainwindow, 'window'):
+            gtkui.mainwindow.window.hide()
+
+        # 2. Release Gtk.Application holding locks
+        if app:
+            if hasattr(gtkui.mainwindow, 'window'):
+                app.remove_window(gtkui.mainwindow.window)
+            app.quit()
+
+        # 3. Fire Deluge's reactor shutdown sequence
         from twisted.internet import reactor
         reactor.callLater(0, reactor.fireSystemEvent, 'gtkui_close')
 
