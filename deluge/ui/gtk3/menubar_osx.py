@@ -31,10 +31,6 @@ _current_dark_mode_state = None
 
 
 def is_macos_dark_mode():
-    """
-    Detects if macOS is currently in Dark Mode.
-    macOS deletes AppleInterfaceStyle in light mode, so check_output returning non-zero means Light Mode.
-    """
     if sys.platform != 'darwin':
         return False
     try:
@@ -52,20 +48,13 @@ def is_macos_dark_mode():
 
 
 def apply_dark_mode(enabled, force=False):
-    """
-    Applies the dark theme variant across global GTK settings and syncs
-    gtk3ui.conf silently without triggering preferences.py.
-    """
     global _current_dark_mode_state
     if _current_dark_mode_state != enabled or force:
         _current_dark_mode_state = enabled
-
-        # 1. Update active GTK3 display settings directly in memory
         settings = Gtk.Settings.get_default()
         if settings:
             settings.set_property('gtk-application-prefer-dark-theme', enabled)
 
-        # 2. Persist to Deluge's UI config without opening or saving Preferences dialog
         try:
             config = ConfigManager('gtk3ui.conf')
             config['choose_theme'] = enabled
@@ -75,17 +64,12 @@ def apply_dark_mode(enabled, force=False):
 
 
 def sync_macos_theme(force=False):
-    """Checks macOS system appearance and syncs GTK on GLib main thread."""
     system_dark = is_macos_dark_mode()
     apply_dark_mode(system_dark, force=force)
-    return True  # Keeps GLib.timeout_add_seconds running
+    return True
 
 
 def ensure_dialog_focus(main_window):
-    """
-    Scans for open GTK dialogs/toplevels and transfers Aqua keyboard focus
-    from the main window to the active dialog.
-    """
     for win in Gtk.Window.list_toplevels():
         if isinstance(win, Gtk.Window) and win.is_visible() and win != main_window:
             win.set_transient_for(main_window)
@@ -102,11 +86,6 @@ def ensure_dialog_focus(main_window):
 
 
 def hide_and_override_preferences_theme(gtkui):
-    """
-    Locates and hides the theme selection widget inside Preferences,
-    and hooks into the dialog's show/hide events to prevent GTK from
-    resetting the theme to light when opening or closing.
-    """
     try:
         pref_builder = gtkui.preferences.builder
         theme_widgets = ['chk_use_dark_theme', 'chk_dark_theme', 'box_theme', 'frame_theme']
@@ -126,7 +105,6 @@ def hide_and_override_preferences_theme(gtkui):
 
 
 def install_cli_tools_action(action, parameter, gtkui):
-    """Triggers elevated AppleScript to symlink bundled macOS binaries into /usr/local/bin."""
     try:
         exec_dir = os.path.dirname(os.path.realpath(sys.executable))
 
@@ -215,13 +193,9 @@ def install_cli_tools_action(action, parameter, gtkui):
 
 
 def menubar_osx(gtkui, app):
-    # Schedule theme application on GLib idle queue once GTK window is realized
     GLib.idle_add(lambda: sync_macos_theme(force=True))
-
-    # Poll macOS theme status every 5 seconds on main GLib loop
     GLib.timeout_add_seconds(5, sync_macos_theme)
 
-    # Apply macOS key shortcuts
     for accel_path, accelerator in macos_main_window_accelmap.items():
         accel_key, accel_mods = Gtk.accelerator_parse(accelerator)
         Gtk.AccelMap.change_entry(accel_path, accel_key, accel_mods, True)
@@ -229,8 +203,8 @@ def menubar_osx(gtkui, app):
     main_builder = gtkui.mainwindow.get_builder()
     menubar = main_builder.get_object('menubar')
 
-    # Hide in-window GTK menubar frame on macOS in favor of native system top bar
-    menubar.hide()
+    if menubar:
+        menubar.hide()
 
     def trigger_widget_action(widget_name):
         obj = main_builder.get_object(widget_name)
@@ -238,13 +212,17 @@ def menubar_osx(gtkui, app):
             obj.emit('activate')
 
     def open_preferences_action(a, p):
-        """Triggers preferences dialog, hides theme options, and forces theme retention."""
-        trigger_widget_action('menuitem_preferences')
-        hide_and_override_preferences_theme(gtkui)
-        GLib.idle_add(lambda: sync_macos_theme(force=True))
+        if hasattr(gtkui, 'preferences'):
+            gtkui.preferences.show()
+            hide_and_override_preferences_theme(gtkui)
+            GLib.idle_add(lambda: sync_macos_theme(force=True))
+
+    def quit_action(a, p):
+        # Fire Deluge's standard shutdown sequence via Twisted reactor
+        from twisted.internet import reactor
+        reactor.callLater(0, reactor.fireSystemEvent, 'gtkui_close')
 
     def trigger_ui_action(action_name):
-        """Triggers direct Deluge GTK UI component functions safely."""
         if action_name == 'add_torrent':
             if client.connected():
                 gtkui.addtorrentdialog.show()
@@ -262,7 +240,6 @@ def menubar_osx(gtkui, app):
                 client.core.resume_torrents([])
 
     def toggle_dark_mode_action(action, parameter):
-        """Manual toggle option in App menu."""
         global _current_dark_mode_state
         new_state = not bool(_current_dark_mode_state)
         apply_dark_mode(new_state, force=True)
@@ -277,32 +254,22 @@ def menubar_osx(gtkui, app):
     registered_actions = {}
 
     action_map = {
-        # Deluge App Menu Actions
         'about': lambda a, p: trigger_widget_action('menuitem_about'),
         'preferences': open_preferences_action,
         'connection_manager': lambda a, p: trigger_widget_action('menuitem_connectionmanager'),
         'toggle_dark_mode': toggle_dark_mode_action,
-        'quit': lambda a, p: gtkui.close(),
+        'quit': quit_action,
         'install_cli': lambda a, p: install_cli_tools_action(a, p, gtkui),
-
-        # File Menu Actions
         'add_torrent': lambda a, p: trigger_ui_action('add_torrent'),
         'create_torrent': lambda a, p: trigger_ui_action('create_torrent'),
-
-        # Edit Menu Actions
         'select_all': lambda a, p: trigger_ui_action('select_all'),
-
-        # View Menu Actions
         'pause_all': lambda a, p: trigger_ui_action('pause_all'),
         'resume_all': lambda a, p: trigger_ui_action('resume_all'),
-
-        # Help Menu Actions
         'homepage': lambda a, p: trigger_widget_action('menuitem_homepage'),
         'faq': lambda a, p: trigger_widget_action('menuitem_faq'),
     }
 
     def wrap_action_callback(callback):
-        """Wraps action callbacks to enforce window manager focus on newly opened dialogs."""
         def wrapped(a, p):
             callback(a, p)
             GLib.idle_add(lambda: ensure_dialog_focus(gtkui.mainwindow.window))
@@ -315,7 +282,6 @@ def menubar_osx(gtkui, app):
             app.add_action(act)
             registered_actions[action_name] = act
 
-    # Poll connection status using GLib main thread timeout
     def update_action_states():
         is_connected = client.connected()
         for act_name in connection_dependent_actions:
@@ -325,56 +291,68 @@ def menubar_osx(gtkui, app):
 
     GLib.timeout_add_seconds(2, update_action_states)
 
-    # Attach Main Window to Gio Application
-    app.add_window(gtkui.mainwindow.window)
+    def setup_app_menus():
+        # Register main window after startup windows have initialized
+        if hasattr(gtkui.mainwindow, 'window'):
+            app.add_window(gtkui.mainwindow.window)
 
-    # Build App Menu ("Deluge" Menu next to Apple Logo)
-    app_menu = Gio.Menu()
+        config = ConfigManager('gtk3ui.conf')
 
-    section_about = Gio.Menu()
-    section_about.append(_('About Deluge'), 'app.about')
-    app_menu.append_section(None, section_about)
+        # Restore Connection Manager display on startup if configured
+        if not config['standalone'] and config.get('show_connection_manager_on_start'):
+            if hasattr(gtkui, 'connectionmanager'):
+                gtkui.connectionmanager.show()
 
-    section_prefs = Gio.Menu()
-    section_prefs.append(_('Preferences...'), 'app.preferences')
+        # Build App Menu
+        app_menu = Gio.Menu()
 
-    config = ConfigManager('gtk3ui.conf')
-    if not config['standalone']:
-        section_prefs.append(_('Connection Manager'), 'app.connection_manager')
+        section_about = Gio.Menu()
+        section_about.append(_('About Deluge'), 'app.about')
+        app_menu.append_section(None, section_about)
 
-    section_prefs.append(_('Toggle Dark Mode'), 'app.toggle_dark_mode')
-    app_menu.append_section(None, section_prefs)
+        section_prefs = Gio.Menu()
+        section_prefs.append(_('Preferences...'), 'app.preferences')
 
-    section_cli = Gio.Menu()
-    section_cli.append(_('Install Command Line Tools...'), 'app.install_cli')
-    app_menu.append_section(None, section_cli)
+        if not config['standalone']:
+            section_prefs.append(_('Connection Manager'), 'app.connection_manager')
 
-    section_quit = Gio.Menu()
-    section_quit.append(_('Quit Deluge'), 'app.quit')
-    app_menu.append_section(None, section_quit)
+        section_prefs.append(_('Toggle Dark Mode'), 'app.toggle_dark_mode')
+        app_menu.append_section(None, section_prefs)
 
-    app.set_app_menu(app_menu)
+        section_cli = Gio.Menu()
+        section_cli.append(_('Install Command Line Tools...'), 'app.install_cli')
+        app_menu.append_section(None, section_cli)
 
-    # Build Main Menubar (File, Edit, View, Help)
-    full_menubar = Gio.Menu()
+        section_quit = Gio.Menu()
+        section_quit.append(_('Quit Deluge'), 'app.quit')
+        app_menu.append_section(None, section_quit)
 
-    file_menu = Gio.Menu()
-    file_menu.append(_('Add Torrent...'), 'app.add_torrent')
-    file_menu.append(_('Create Torrent...'), 'app.create_torrent')
-    full_menubar.append_submenu(_('File'), file_menu)
+        app.set_app_menu(app_menu)
 
-    edit_menu = Gio.Menu()
-    edit_menu.append(_('Select All'), 'app.select_all')
-    full_menubar.append_submenu(_('Edit'), edit_menu)
+        # Build Menubar
+        full_menubar = Gio.Menu()
 
-    view_menu = Gio.Menu()
-    view_menu.append(_('Pause All Torrents'), 'app.pause_all')
-    view_menu.append(_('Resume All Torrents'), 'app.resume_all')
-    full_menubar.append_submenu(_('View'), view_menu)
+        file_menu = Gio.Menu()
+        file_menu.append(_('Add Torrent...'), 'app.add_torrent')
+        file_menu.append(_('Create Torrent...'), 'app.create_torrent')
+        full_menubar.append_submenu(_('File'), file_menu)
 
-    help_menu = Gio.Menu()
-    help_menu.append(_('Homepage'), 'app.homepage')
-    help_menu.append(_('FAQ'), 'app.faq')
-    full_menubar.append_submenu(_('Help'), help_menu)
+        edit_menu = Gio.Menu()
+        edit_menu.append(_('Select All'), 'app.select_all')
+        full_menubar.append_submenu(_('Edit'), edit_menu)
 
-    app.set_menubar(full_menubar)
+        view_menu = Gio.Menu()
+        view_menu.append(_('Pause All Torrents'), 'app.pause_all')
+        view_menu.append(_('Resume All Torrents'), 'app.resume_all')
+        full_menubar.append_submenu(_('View'), view_menu)
+
+        help_menu = Gio.Menu()
+        help_menu.append(_('Homepage'), 'app.homepage')
+        help_menu.append(_('FAQ'), 'app.faq')
+        full_menubar.append_submenu(_('Help'), help_menu)
+
+        app.set_menubar(full_menubar)
+        return False
+
+    # Defer setting up app window and menus until GTK main loop processes startup windowing
+    GLib.idle_add(setup_app_menus)
