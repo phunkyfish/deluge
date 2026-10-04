@@ -5,9 +5,17 @@
 # the additional special exception to link portions of this program with the OpenSSL library.
 # See LICENSE for more details.
 #
-from gi.repository import Gtk
 
+import os
+import subprocess
+import sys
+
+from gi.repository import Gdk, Gio, Gtk
+from twisted.internet import task
+
+import deluge.component as component
 from deluge.configmanager import ConfigManager
+from deluge.ui.client import client
 
 macos_main_window_accelmap = {
     '<Deluge-MainWindow>/File/Add Torrent': '<Meta>o',
@@ -21,8 +29,94 @@ macos_main_window_accelmap = {
 }
 
 
-def menubar_osx(gtkui, osxapp):
-    # Change key shortcuts
+def install_cli_tools_action(action, parameter, gtkui):
+    """Triggers elevated AppleScript to symlink bundled macOS binaries into /usr/local/bin."""
+    try:
+        exec_dir = os.path.dirname(os.path.realpath(sys.executable))
+
+        cmd_map = {
+            'deluge': 'Deluge',
+            'deluge-gtk': 'deluge-gtk',
+            'deluged': 'deluged',
+            'deluge-web': 'deluge-web',
+            'deluge-console': 'deluge-console',
+        }
+
+        needs_update = False
+        for cmd, binary in cmd_map.items():
+            src = os.path.join(exec_dir, binary)
+            dst = os.path.join('/usr/local/bin', cmd)
+
+            if not os.path.islink(dst) or os.path.realpath(dst) != src:
+                needs_update = True
+                break
+
+        if not needs_update:
+            dialog = Gtk.MessageDialog(
+                transient_for=gtkui.mainwindow.window,
+                flags=0,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text=_('CLI Tools Already Installed'),
+            )
+            dialog.format_secondary_text(
+                _('All command-line shortcuts in /usr/local/bin are up to date.')
+            )
+            dialog.run()
+            dialog.destroy()
+            return
+
+        ln_cmds = []
+        for cmd, binary in cmd_map.items():
+            src = os.path.join(exec_dir, binary)
+            dst = os.path.join('/usr/local/bin', cmd)
+            ln_cmds.append(f"ln -sf '{src}' '{dst}'")
+
+        shell_cmd = 'mkdir -p /usr/local/bin && ' + ' && '.join(ln_cmds)
+        ascript = f'do shell script "{shell_cmd}" with administrator privileges'
+
+        res = subprocess.run(
+            ['osascript', '-e', ascript], capture_output=True, text=True
+        )
+
+        if res.returncode == 0:
+            title = _('CLI Tools Installed')
+            msg = _(
+                'Command-line shortcuts (deluge, deluged, deluge-web, deluge-console) '
+                'were successfully linked in /usr/local/bin.'
+            )
+            msg_type = Gtk.MessageType.INFO
+        else:
+            title = _('Installation Cancelled')
+            msg = _('Installation was cancelled or failed to acquire admin privileges.')
+            msg_type = Gtk.MessageType.WARNING
+
+        dialog = Gtk.MessageDialog(
+            transient_for=gtkui.mainwindow.window,
+            flags=0,
+            message_type=msg_type,
+            buttons=Gtk.ButtonsType.OK,
+            text=title,
+        )
+        dialog.format_secondary_text(msg)
+        dialog.run()
+        dialog.destroy()
+
+    except Exception as e:
+        dialog = Gtk.MessageDialog(
+            transient_for=gtkui.mainwindow.window,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=_('Error'),
+        )
+        dialog.format_secondary_text(str(e))
+        dialog.run()
+        dialog.destroy()
+
+
+def menubar_osx(gtkui, app):
+    # Apply macOS key shortcuts
     for accel_path, accelerator in macos_main_window_accelmap.items():
         accel_key, accel_mods = Gtk.accelerator_parse(accelerator)
         Gtk.AccelMap.change_entry(accel_path, accel_key, accel_mods, True)
@@ -30,39 +124,130 @@ def menubar_osx(gtkui, osxapp):
     main_builder = gtkui.mainwindow.get_builder()
     menubar = main_builder.get_object('menubar')
 
-    config = ConfigManager('gtk3ui.conf')
-    file_menu = main_builder.get_object('menu_file').get_submenu()
-    file_items = file_menu.get_children()
-    quit_all_item = file_items[3]
-
-    for item in range(2, len(file_items)):  # remove quits
-        file_menu.remove(file_items[item])
-
-    menu_widget = main_builder.get_object('menu_edit')
-    edit_menu = menu_widget.get_submenu()
-    edit_items = edit_menu.get_children()
-    pref_item = edit_items[0]
-    edit_menu.remove(pref_item)
-
-    conn_item = edit_items[1]
-    edit_menu.remove(conn_item)
-
-    menubar.remove(menu_widget)
-
-    help_menu = main_builder.get_object('menu_help').get_submenu()
-    help_items = help_menu.get_children()
-    about_item = help_items[4]
-    help_menu.remove(about_item)
-    help_menu.remove(help_items[3])  # separator
-
+    # Hide in-window GTK menubar frame on macOS in favor of native system top bar
     menubar.hide()
-    osxapp.set_menu_bar(menubar)
-    # populate app menu
-    osxapp.insert_app_menu_item(about_item, 0)
-    osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), 1)
-    osxapp.insert_app_menu_item(pref_item, 2)
+
+    def trigger_widget_action(widget_name):
+        obj = main_builder.get_object(widget_name)
+        if obj:
+            obj.emit('activate')
+
+    def trigger_ui_action(action_name):
+        """Triggers direct Deluge GTK UI component functions safely."""
+        if action_name == 'add_torrent':
+            if client.connected():
+                gtkui.addtorrentdialog.show()
+        elif action_name == 'create_torrent':
+            from deluge.ui.gtk3.createtorrentdialog import CreateTorrentDialog
+            CreateTorrentDialog().show()
+        elif action_name == 'select_all':
+            if hasattr(gtkui.torrentview, 'treeview'):
+                gtkui.torrentview.treeview.get_selection().select_all()
+        elif action_name == 'pause_all':
+            if client.connected():
+                client.core.pause_torrents([])
+        elif action_name == 'resume_all':
+            if client.connected():
+                client.core.resume_torrents([])
+
+    connection_dependent_actions = {
+        'add_torrent',
+        'pause_all',
+        'resume_all',
+        'select_all',
+    }
+
+    registered_actions = {}
+
+    action_map = {
+        # Deluge App Menu Actions
+        'about': lambda a, p: trigger_widget_action('menuitem_about'),
+        'preferences': lambda a, p: trigger_widget_action('menuitem_preferences'),
+        'connection_manager': lambda a, p: trigger_widget_action('menuitem_connectionmanager'),
+        'quit': lambda a, p: gtkui.close(),
+        'install_cli': lambda a, p: install_cli_tools_action(a, p, gtkui),
+
+        # File Menu Actions
+        'add_torrent': lambda a, p: trigger_ui_action('add_torrent'),
+        'create_torrent': lambda a, p: trigger_ui_action('create_torrent'),
+
+        # Edit Menu Actions
+        'select_all': lambda a, p: trigger_ui_action('select_all'),
+
+        # View Menu Actions
+        'pause_all': lambda a, p: trigger_ui_action('pause_all'),
+        'resume_all': lambda a, p: trigger_ui_action('resume_all'),
+
+        # Help Menu Actions
+        'homepage': lambda a, p: trigger_widget_action('menuitem_homepage'),
+        'faq': lambda a, p: trigger_widget_action('menuitem_faq'),
+    }
+
+    for action_name, callback in action_map.items():
+        if not app.has_action(action_name):
+            act = Gio.SimpleAction.new(action_name, None)
+            act.connect('activate', callback)
+            app.add_action(act)
+            registered_actions[action_name] = act
+
+    # Monitor connection state and toggle action status
+    def update_action_states():
+        is_connected = client.connected()
+        for act_name in connection_dependent_actions:
+            if act_name in registered_actions:
+                registered_actions[act_name].set_enabled(is_connected)
+
+    connection_poller = task.LoopingCall(update_action_states)
+    connection_poller.start(1.0)
+
+    # Attach Main Window to Gio Application
+    app.add_window(gtkui.mainwindow.window)
+
+    # Build App Menu ("Deluge" Menu next to Apple Logo)
+    app_menu = Gio.Menu()
+
+    section_about = Gio.Menu()
+    section_about.append(_('About Deluge'), 'app.about')
+    app_menu.append_section(None, section_about)
+
+    section_prefs = Gio.Menu()
+    section_prefs.append(_('Preferences...'), 'app.preferences')
+
+    config = ConfigManager('gtk3ui.conf')
     if not config['standalone']:
-        osxapp.insert_app_menu_item(conn_item, 3)
-    if quit_all_item.get_visible():
-        osxapp.insert_app_menu_item(Gtk.SeparatorMenuItem(), 4)
-        osxapp.insert_app_menu_item(quit_all_item, 5)
+        section_prefs.append(_('Connection Manager'), 'app.connection_manager')
+    app_menu.append_section(None, section_prefs)
+
+    section_cli = Gio.Menu()
+    section_cli.append(_('Install Command Line Tools...'), 'app.install_cli')
+    app_menu.append_section(None, section_cli)
+
+    section_quit = Gio.Menu()
+    section_quit.append(_('Quit Deluge'), 'app.quit')
+    app_menu.append_section(None, section_quit)
+
+    app.set_app_menu(app_menu)
+
+    # Build Main Menubar (File, Edit, View, Help)
+    full_menubar = Gio.Menu()
+
+    file_menu = Gio.Menu()
+    file_menu.append(_('Add Torrent...'), 'app.add_torrent')
+    file_menu.append(_('Create Torrent...'), 'app.create_torrent')
+    full_menubar.append_submenu(_('File'), file_menu)
+
+    edit_menu = Gio.Menu()
+    edit_menu.append(_('Select All'), 'app.select_all')
+    full_menubar.append_submenu(_('Edit'), edit_menu)
+
+    view_menu = Gio.Menu()
+    view_menu.append(_('Pause All Torrents'), 'app.pause_all')
+    view_menu.append(_('Resume All Torrents'), 'app.resume_all')
+    full_menubar.append_submenu(_('View'), view_menu)
+
+    help_menu = Gio.Menu()
+    help_menu.append(_('Homepage'), 'app.homepage')
+    help_menu.append(_('FAQ'), 'app.faq')
+    full_menubar.append_submenu(_('Help'), help_menu)
+
+    app.set_menubar(full_menubar)

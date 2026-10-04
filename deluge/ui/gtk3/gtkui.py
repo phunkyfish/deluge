@@ -19,6 +19,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 
 # isort:imports-thirdparty
+from gi.repository import Gio, Gtk
 from gi.repository.GLib import set_prgname
 from gi.repository.Gtk import Builder, ResponseType
 from twisted.internet import defer, gtk3reactor
@@ -149,21 +150,26 @@ class GtkUI:
             log.debug('OS signal "die" caught with args: %s', args)
             reactor.stop()
 
-        self.osxapp = None
+        self.app = None
         if windows_check():
             from win32api import SetConsoleCtrlHandler
 
             SetConsoleCtrlHandler(on_die, True)
             log.debug('Win32 "die" handler registered')
-        elif osx_check() and windowing('quartz'):
+        elif sys.platform == 'darwin':
+            # Initialize native Gtk/Gio Application for macOS
             try:
-                import gtkosx_application
-            except ImportError:
-                pass
-            else:
-                self.osxapp = gtkosx_application.gtkosx_application_get()
-                self.osxapp.connect('NSApplicationWillTerminate', on_die)
-                log.debug('OSX quartz "die" handler registered')
+                self.app = Gtk.Application.get_default()
+                if not self.app:
+                    self.app = Gtk.Application(
+                        application_id='org.deluge_torrent.deluge',
+                        flags=Gio.ApplicationFlags.FLAGS_NONE,
+                    )
+                    self.app.register()
+                self.app.connect('shutdown', on_die)
+                log.debug('macOS Gio.Application registered')
+            except Exception as e:
+                log.warning('Failed to load Gio.Application on macOS: %s', e)
 
         # Set process name again to fix gtk issue
         setproctitle(getproctitle())
@@ -206,19 +212,18 @@ class GtkUI:
         self.statusbar = StatusBar()
         self.addtorrentdialog = AddTorrentDialog()
 
-        if self.osxapp:
+        if self.app:
+            # Handle native macOS file association events via Gio.Application
+            def on_gio_open(app, files, hint):
+                filenames = [f.get_path() for f in files if f.get_path()]
+                if filenames:
+                    process_args(filenames)
 
-            def nsapp_open_file(osxapp, filename):
-                # Ignore command name which is raised at app launch (python opening main script).
-                if filename == sys.argv[0]:
-                    return True
-                process_args([filename])
+            self.app.connect('open', on_gio_open)
 
-            self.osxapp.connect('NSApplicationOpenFile', nsapp_open_file)
             from .menubar_osx import menubar_osx
 
-            menubar_osx(self, self.osxapp)
-            self.osxapp.ready()
+            menubar_osx(self, self.app)
 
         # Initialize the plugins
         self.plugins = PluginManager()
