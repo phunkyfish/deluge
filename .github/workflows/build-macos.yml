@@ -41,6 +41,10 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Force Python 3.11 to take precedence
+        run: |
+          echo "$(dirname $(which python3.11))" >> $GITHUB_PATH
+
       - name: Install System Packaging Tools & Libtorrent
         env:
           HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
@@ -168,7 +172,8 @@ jobs:
           # Walk site-packages
           if os.path.exists(site_pkgs):
               for root, dirs, files in os.walk(site_pkgs):
-                  dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith('.dist-info') and not d.endswith('.egg-info')]
+                  # dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.endswith('.dist-info') and not d.endswith('.egg-info')]
+                  dirs[:] = [d for d in dirs if d not in ignored_dirs]
                   for f in files:
                       if f.endswith(ignored_exts):
                           continue
@@ -396,6 +401,10 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Force Python 3.11 to take precedence
+        run: |
+          echo "$(dirname $(which python3.11))" >> $GITHUB_PATH
+
       - name: Install Build Dependencies & Resolve Version
         run: |
           python3 -m pip install --upgrade pip wheel "setuptools==81.0.0" pyinstaller
@@ -509,6 +518,7 @@ jobs:
 
               char resolved_path[PATH_MAX];
               if (!realpath(path, resolved_path)) return 1;
+
               char *exec_dir = dirname(resolved_path);
 
               char zip_path[PATH_MAX], fw_dir[PATH_MAX], res_dir[PATH_MAX], schema_dir[PATH_MAX], typelib_dir[PATH_MAX];
@@ -548,7 +558,8 @@ jobs:
               PyConfig config;
               PyConfig_InitIsolatedConfig(&config);
 
-              PyWideStringList_Append(&config.warnoptions, L"ignore::UserWarning:pkg_resources");
+              // --- SUPPRESS WARNINGS AT C-LEVEL ---
+              PyWideStringList_Append(&config.warnoptions, L"ignore:pkg_resources is deprecated:UserWarning");
               PyWideStringList_Append(&config.warnoptions, L"ignore::DeprecationWarning");
 
               PyStatus status = PyConfig_SetBytesArgv(&config, argc, argv);
@@ -574,9 +585,8 @@ jobs:
               if (PyStatus_Exception(status)) return 1;
 
               const char *script =
-                  "import sys, os, builtins, warnings\n"
+                  "import sys, os, builtins, warnings, argparse, subprocess\n"
                   "warnings.filterwarnings('ignore', category=UserWarning, module='.*pkg_resources.*')\n"
-                  "warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*')\n"
                   "warnings.filterwarnings('ignore', category=DeprecationWarning)\n"
                   "\n"
                   "exec_dir = os.path.dirname(os.path.realpath(sys.executable))\n"
@@ -592,19 +602,80 @@ jobs:
                   "os.environ['GDK_PIXBUF_MODULE_FILE'] = os.path.join(res, 'lib', 'gdk-pixbuf-2.0', '2.10.0', 'loaders.cache')\n"
                   "os.environ['GDK_PIXBUF_MODULEDIR'] = fw\n"
                   "\n"
+                  "# --- PATH SYMLINK INSTALLER LOGIC ---\n"
+                  "def setup_cli_symlinks(interactive=False):\n"
+                  "    target_dir = '/usr/local/bin'\n"
+                  "    cmd_map = {\n"
+                  "        'deluge': 'Deluge',\n"
+                  "        'deluge-gtk': 'deluge-gtk',\n"
+                  "        'deluged': 'deluged',\n"
+                  "        'deluge-web': 'deluge-web',\n"
+                  "        'deluge-console': 'deluge-console'\n"
+                  "    }\n"
+                  "    if not os.path.exists(target_dir):\n"
+                  "        try:\n"
+                  "            os.makedirs(target_dir, exist_ok=True)\n"
+                  "        except Exception:\n"
+                  "            pass\n"
+                  "\n"
+                  "    writable = os.access(target_dir, os.W_OK)\n"
+                  "    if not writable:\n"
+                  "        if interactive:\n"
+                  "            ln_cmds = []\n"
+                  "            for cmd, binary in cmd_map.items():\n"
+                  "                src = os.path.join(exec_dir, binary)\n"
+                  "                dst = os.path.join(target_dir, cmd)\n"
+                  "                ln_cmds.append(f'ln -sf \"{src}\" \"{dst}\"')\n"
+                  "            shell_cmd = 'mkdir -p /usr/local/bin && ' + ' && '.join(ln_cmds)\n"
+                  "            ascript = f'do shell script \"{shell_cmd}\" with administrator privileges'\n"
+                  "            res = subprocess.run(['osascript', '-e', ascript], capture_output=True)\n"
+                  "            sys.exit(res.returncode)\n"
+                  "        else:\n"
+                  "            target_dir = os.path.expanduser('~/.local/bin')\n"
+                  "            os.makedirs(target_dir, exist_ok=True)\n"
+                  "\n"
+                  "    for cmd, binary_name in cmd_map.items():\n"
+                  "        src = os.path.join(exec_dir, binary_name)\n"
+                  "        dst = os.path.join(target_dir, cmd)\n"
+                  "        if os.path.exists(src):\n"
+                  "            try:\n"
+                  "                if os.path.islink(dst) or os.path.exists(dst):\n"
+                  "                    os.remove(dst)\n"
+                  "                os.symlink(src, dst)\n"
+                  "            except Exception:\n"
+                  "                pass\n"
+                  "    if interactive:\n"
+                  "        sys.exit(0)\n"
+                  "\n"
+                  "if len(sys.argv) > 1 and sys.argv[1] == '--install-cli':\n"
+                  "    setup_cli_symlinks(interactive=True)\n"
+                  "else:\n"
+                  "    setup_cli_symlinks(interactive=False)\n"
+                  "\n"
                   "try:\n"
                   "    import gettext\n"
                   "    builtins._ = gettext.translation('deluge', fallback=True).gettext\n"
                   "except Exception:\n"
                   "    builtins._ = lambda msg: msg\n"
                   "\n"
-                  "if len(sys.argv) > 1 and sys.argv[1] == '-c':\n"
-                  "    exec(sys.argv[2])\n"
-                  "else:\n"
-                  "    import argparse\n"
+                  "# --- OFFICIAL DISPATCH BY EXECUTABLE NAME ---\n"
+                  "prog_name = os.path.basename(sys.executable).lower()\n"
+                  "if 'deluged' in prog_name:\n"
+                  "    from deluge.ui.daemon.daemon import Daemon\n"
+                  "    Daemon().start()\n"
+                  "elif 'web' in prog_name:\n"
+                  "    from deluge.ui.web.web import Web\n"
+                  "    Web().start()\n"
+                  "elif 'console' in prog_name:\n"
+                  "    from deluge.ui.console.console import Console\n"
+                  "    Console().start()\n"
+                  "elif 'deluge-gtk' in prog_name:\n"
                   "    from deluge.ui.gtk3.gtkui import GtkUI\n"
-                  "    args = argparse.Namespace(torrents=[])\n"
-                  "    GtkUI(args).start()\n";
+                  "    args = argparse.Namespace(torrents=sys.argv[1:])\n"
+                  "    GtkUI(args).start()\n"
+                  "else:\n"
+                  "    from deluge.ui.ui_entry import start_ui\n"
+                  "    start_ui()\n";
 
               int result = PyRun_SimpleString(script);
               Py_Finalize();
@@ -626,6 +697,14 @@ jobs:
 
           chmod +x "$FINAL_APP/Contents/MacOS/Deluge"
           rm -f launcher.c
+
+          # === CREATE HARDLINK ENTRYPOINTS IN CONTENTS/MACOS ===
+          cd "$FINAL_APP/Contents/MacOS"
+          ln -f ./Deluge ./deluged
+          ln -f ./Deluge ./deluge-web
+          ln -f ./Deluge ./deluge-console
+          ln -f ./Deluge ./deluge-gtk
+          # (Note: 'deluge' omitted here to avoid APFS case collision with 'Deluge')
 
       - name: Clean Broken Symlinks in Bundle
         run: |
